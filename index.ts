@@ -123,6 +123,40 @@ class TypewriterInstance {
     window.addEventListener("mouseup", onMouseUp)
   }
 
+  insertCharacter(char: string) {
+    this.characters.splice(this.insertionPoint, 0, char)
+    this.insertionPoint++
+    this.render()
+  }
+
+  deleteCharacter() {
+    if (this.insertionPoint > 0) {
+      this.characters.splice(this.insertionPoint - 1, 1)
+      this.insertionPoint--
+      this.render()
+    }
+  }
+
+  insertNewline() {
+    this.characters.splice(this.insertionPoint, 0, "\n")
+    this.insertionPoint++
+    this.render()
+  }
+
+  moveLeft() {
+    if (this.insertionPoint > 0) {
+      this.insertionPoint--
+      this.render()
+    }
+  }
+
+  moveRight() {
+    if (this.insertionPoint < this.characters.length) {
+      this.insertionPoint++
+      this.render()
+    }
+  }
+
   render() {
     // The width of the drawing canvas
     let w = gw * lineWidth
@@ -246,31 +280,10 @@ window.addEventListener("mousedown", (e) => {
 
 window.addEventListener("keydown", (e) => {
   if (!focusedInstance) return
-
-  if (e.key.length === 1) {
-    // Regular character - insert at insertion point
-    focusedInstance.characters.splice(focusedInstance.insertionPoint, 0, e.key)
-    focusedInstance.insertionPoint++
-    focusedInstance.render()
-  } else if (e.key === "Backspace" && focusedInstance.insertionPoint > 0) {
-    // Backspace - remove character before insertion point
-    focusedInstance.characters.splice(focusedInstance.insertionPoint - 1, 1)
-    focusedInstance.insertionPoint--
-    focusedInstance.render()
-  } else if (e.key === "Enter") {
-    // Enter - add newline at insertion point
-    focusedInstance.characters.splice(focusedInstance.insertionPoint, 0, "\n")
-    focusedInstance.insertionPoint++
-    focusedInstance.render()
-  } else if (e.key === "ArrowLeft" && focusedInstance.insertionPoint > 0) {
-    // Move insertion point left
-    focusedInstance.insertionPoint--
-    focusedInstance.render()
-  } else if (e.key === "ArrowRight" && focusedInstance.insertionPoint < focusedInstance.characters.length) {
-    // Move insertion point right
-    focusedInstance.insertionPoint++
-    focusedInstance.render()
-  }
-
+  if (e.key.length === 1) return focusedInstance.insertCharacter(e.key)
+  if (e.key === "Backspace") return focusedInstance.deleteCharacter()
+  if (e.key === "Enter") return focusedInstance.insertNewline()
+  if (e.key === "ArrowLeft") return focusedInstance.moveLeft()
+  if (e.key === "ArrowRight") return focusedInstance.moveRight()
   e.preventDefault()
 })

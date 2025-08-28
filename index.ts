@@ -8,11 +8,11 @@ let outputDPI = 600 // You can change this to whatever value you want, and every
 let scale = outputDPI / atlasDPI
 
 // The width of the canvas
-let lineWidth = 64 // this works out to A5 paper width
+let lineWidth = 24 // this works out to A5 paper width
 
 // These create empty space…
 let margin = 6 // left and right — measure in character widths
-let padding = 3 // on the top and bottom — measure in line heights
+let padding = 1 // on the top and bottom — measure in line heights
 
 // ATLAS ###########################################################################################
 
@@ -72,117 +72,101 @@ let ctx = elm.getContext("2d")!
 // Position to draw the next char
 let cx = margin
 let cy = padding
-let endOfLine = false
 
 // Insertion point screen position
 let insertionX = margin * gw
 let insertionY = padding * lh
 
 let render = () => {
-  let text = characters.join("")
-  let words = text.split(" ")
-
   // The width of the drawing canvas
   let w = gw * lineWidth
 
   // We first do a layout-only pass so we can measure the height of the canvas
   cx = margin // Reset the cursor position to the top left
   cy = padding
-  endOfLine = false
-  words.forEach((_, i) => drawWord(i, words, false))
+  drawAllText(characters, false)
   let h = (cy + 1 + padding) * lh // Measure the height of the canvas
 
   // Before we resize the canvas, check if we're scrolled to the bottom.
   let oldHeight = elm.height
 
-  // Now that we've got the width and height, we can update the canvas
+  // Now that we've got the width and height, we can resize the canvas (which also clears it)
   elm.width = w * scale
   elm.height = h * scale
   ctx.scale(scale, scale) // Have to set this every time we resize the canvas.
 
-  if (oldHeight < elm.height) {
-    document.body.scrollBy({ top: elm.height - oldHeight })
-  }
+  if (oldHeight < elm.height) document.body.scrollBy({ top: elm.height - oldHeight })
 
   // The extra padding on chars means they overlap, so this allows them to overlap nicely
   ctx.globalCompositeOperation = "darken" // Have to set this every time we resize the canvas.
 
-  ctx.fillStyle = "#fff"
-  ctx.fillRect(0, 0, w, h)
+  // Improve visual centering
+  ctx.translate(0, verticalAlign)
 
-  // For debugging glyph layout
-  ctx.fillStyle = "#f001"
-
-  // Finally, we can draw all the chars
+  // Draw all the chars
   cx = margin // Reset the cursor position to the top left (again)
   cy = padding
-  endOfLine = false
-  let charIndex = 0
-  words.forEach((_, i) => {
-    charIndex = drawWord(i, words, true, charIndex)
-  })
+  drawAllText(characters, true)
 
   // Draw insertion point
-  ctx.fillStyle = "#7a757b"
-  ctx.fillRect(insertionX, insertionY - lh * 0.1, gw * 0.2, gh * 1.2)
+  ctx.fillStyle = `hsl(0, 70%, ${(Math.random() * 15 + 35) | 0}%)`
+  ctx.beginPath()
+  ctx.roundRect(insertionX + gw * 0.05, insertionY - lh * 0.2, gw * 0.15, gh * 1.4, gw * 0.05)
+  ctx.fill()
 }
 
-let drawWord = (i: number, words: string[], draw: boolean, charIndex = 0) => {
-  let word = words[i]
-  let lastWord = i === words.length - 1
+let drawAllText = (chars: string[], draw: boolean) => {
+  let charIndex = 0
 
-  if (word.length === 0) {
-    if (!endOfLine && !lastWord) {
-      adv()
+  for (let i = 0; i < chars.length; i++) {
+    let char = chars[i]
+
+    // Handle newlines
+    if (char === "\n") {
+      newline()
+      charIndex++
+      continue
     }
-    return
-  }
 
-  // First, figure out if there's room on the line for this word
-  if (cx + word.length >= lineWidth - margin) {
-    newline()
-  }
+    // For spaces, just advance the cursor (and check if we need to wrap)
+    if (char === " ") {
+      if (cx >= lineWidth - margin) {
+        newline()
+      } else {
+        cx++
+      }
+      charIndex++
+      continue
+    }
 
-  for (let [, k] of [...word].entries()) {
-    endOfLine = false
+    // For non-space chars, check if the whole word fits on current line
+    let wordEnd = i
+    while (wordEnd < chars.length && chars[wordEnd] !== " " && chars[wordEnd] !== "\n") wordEnd++
+    let wordLength = wordEnd - i
+
+    // If word won't fit on current line, wrap to next line
+    if (cx + wordLength > lineWidth - margin) newline()
+
+    // Draw regular characters
+    let [gx, gy] = getGlyphPosInAtlas(char)
+    gx ??= 2257
+    gy ??= 97
+
+    // Draw the glyph
+    if (draw) {
+      let px = cx * gw
+      let py = cy * lh
+      ctx.drawImage(atlasImg, gx - pad, gy - pad, gw + pad * 2, gh + pad * 2, px - pad, py - pad, gw + pad * 2, gh + pad * 2)
+    }
+
+    cx++
+    charIndex++
 
     // Check if this is where the insertion point should be
     if (draw && charIndex === insertionPoint) {
       insertionX = cx * gw
       insertionY = cy * lh
     }
-
-    charIndex++
-
-    if (k === "\n") {
-      newline()
-      continue
-    }
-
-    let [gx, gy] = getGlyphPosInAtlas(k)
-    // if (gx == null || gy == null) [gx, gy] = getGlyphPosInAtlas("*")
-    gx ??= 2257
-    gy ??= 97
-
-    // Draw the glyph at these pixel coords
-    let px = cx * gw
-    let py = cy * lh
-
-    if (draw) {
-      ctx.drawImage(atlasImg, gx - pad, gy - pad, gw + pad * 2, gh + pad * 2, px - pad, py - pad, gw + pad * 2, gh + pad * 2)
-    }
-
-    adv() // advance to the next letter
-  }
-
-  if (cx !== margin && !lastWord) {
-    // Check if insertion point is at the space
-    if (draw && charIndex === insertionPoint) {
-      insertionX = cx * gw
-      insertionY = cy * lh
-    }
-    charIndex++
-    adv() // advance one extra space for the next word
   }
 
   // Check if insertion point is at the very end
@@ -190,21 +174,9 @@ let drawWord = (i: number, words: string[], draw: boolean, charIndex = 0) => {
     insertionX = cx * gw
     insertionY = cy * lh
   }
-
-  return charIndex
 }
 
-// Advance the cursor by one space
-let adv = () => {
-  if (endOfLine) return
-  cx++
-  if (cx >= lineWidth - margin) {
-    endOfLine = true
-    newline()
-  }
-}
-
-// Advance the cursor to the beginning of the next line
+// Move cursor to beginning of next line
 let newline = () => {
   cx = margin
   cy++

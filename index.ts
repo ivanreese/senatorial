@@ -75,7 +75,7 @@ let cy = padding
 let endOfLine = false
 
 let render = () => {
-  let text = textarea.value
+  let text = characters.join("")
   let words = text.split(" ")
 
   // The width of the drawing canvas
@@ -179,8 +179,23 @@ let newline = () => {
 
 // INPUT HANDLING ##################################################################################
 
-let textarea = document.querySelector("textarea")!
+// Array to store typed characters
+let characters: string[] = []
 
-textarea.oninput = () => {
-  render()
-}
+window.addEventListener("keydown", (e) => {
+  if (e.key.length === 1) {
+    // Regular character
+    characters.push(e.key)
+    render()
+  } else if (e.key === "Backspace" && characters.length > 0) {
+    // Backspace - remove last character
+    characters.pop()
+    render()
+  } else if (e.key === "Enter") {
+    // Enter - add newline
+    characters.push("\n")
+    render()
+  }
+
+  e.preventDefault()
+})

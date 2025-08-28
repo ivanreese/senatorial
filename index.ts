@@ -74,6 +74,10 @@ let cx = margin
 let cy = padding
 let endOfLine = false
 
+// Insertion point screen position
+let insertionX = margin * gw
+let insertionY = padding * lh
+
 let render = () => {
   let text = characters.join("")
   let words = text.split(" ")
@@ -113,10 +117,17 @@ let render = () => {
   cx = margin // Reset the cursor position to the top left (again)
   cy = padding
   endOfLine = false
-  words.forEach((_, i) => drawWord(i, words, true))
+  let charIndex = 0
+  words.forEach((_, i) => {
+    charIndex = drawWord(i, words, true, charIndex)
+  })
+
+  // Draw insertion point
+  ctx.fillStyle = "#7a757b"
+  ctx.fillRect(insertionX, insertionY - lh * 0.1, gw * 0.2, gh * 1.2)
 }
 
-let drawWord = (i: number, words: string[], draw: boolean) => {
+let drawWord = (i: number, words: string[], draw: boolean, charIndex = 0) => {
   let word = words[i]
   let lastWord = i === words.length - 1
 
@@ -135,6 +146,14 @@ let drawWord = (i: number, words: string[], draw: boolean) => {
   for (let [, k] of [...word].entries()) {
     endOfLine = false
 
+    // Check if this is where the insertion point should be
+    if (draw && charIndex === insertionPoint) {
+      insertionX = cx * gw
+      insertionY = cy * lh
+    }
+
+    charIndex++
+
     if (k === "\n") {
       newline()
       continue
@@ -147,7 +166,7 @@ let drawWord = (i: number, words: string[], draw: boolean) => {
 
     // Draw the glyph at these pixel coords
     let px = cx * gw
-    let py = cy * lh + verticalAlign
+    let py = cy * lh
 
     if (draw) {
       ctx.drawImage(atlasImg, gx - pad, gy - pad, gw + pad * 2, gh + pad * 2, px - pad, py - pad, gw + pad * 2, gh + pad * 2)
@@ -157,8 +176,22 @@ let drawWord = (i: number, words: string[], draw: boolean) => {
   }
 
   if (cx !== margin && !lastWord) {
+    // Check if insertion point is at the space
+    if (draw && charIndex === insertionPoint) {
+      insertionX = cx * gw
+      insertionY = cy * lh
+    }
+    charIndex++
     adv() // advance one extra space for the next word
   }
+
+  // Check if insertion point is at the very end
+  if (draw && charIndex === insertionPoint) {
+    insertionX = cx * gw
+    insertionY = cy * lh
+  }
+
+  return charIndex
 }
 
 // Advance the cursor by one space
@@ -182,18 +215,32 @@ let newline = () => {
 // Array to store typed characters
 let characters: string[] = []
 
+// Insertion point position in the characters array
+let insertionPoint = 0
+
 window.addEventListener("keydown", (e) => {
   if (e.key.length === 1) {
-    // Regular character
-    characters.push(e.key)
+    // Regular character - insert at insertion point
+    characters.splice(insertionPoint, 0, e.key)
+    insertionPoint++
     render()
-  } else if (e.key === "Backspace" && characters.length > 0) {
-    // Backspace - remove last character
-    characters.pop()
+  } else if (e.key === "Backspace" && insertionPoint > 0) {
+    // Backspace - remove character before insertion point
+    characters.splice(insertionPoint - 1, 1)
+    insertionPoint--
     render()
   } else if (e.key === "Enter") {
-    // Enter - add newline
-    characters.push("\n")
+    // Enter - add newline at insertion point
+    characters.splice(insertionPoint, 0, "\n")
+    insertionPoint++
+    render()
+  } else if (e.key === "ArrowLeft" && insertionPoint > 0) {
+    // Move insertion point left
+    insertionPoint--
+    render()
+  } else if (e.key === "ArrowRight" && insertionPoint < characters.length) {
+    // Move insertion point right
+    insertionPoint++
     render()
   }
 

@@ -17,6 +17,7 @@ body {
 }
 
 canvas.text {
+  position: absolute;
   display: block;
   margin-inline: auto;
   width: calc(100% - 8em);

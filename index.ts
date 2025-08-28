@@ -81,10 +81,36 @@ class TypewriterInstance {
   insertionX = margin * gw
   insertionY = padding * lh
 
-  constructor() {
+  constructor(x = 0, y = 0) {
     this.elm.className = "text"
+    this.elm.style.left = `${x}px`
+    this.elm.style.top = `${y}px`
     document.body.appendChild(this.elm)
-    this.elm.onclick = () => (focusedInstance = this)
+
+    // Add drag functionality
+    this.elm.onmousedown = (e) => {
+      let dragStartX = e.clientX
+      let dragStartY = e.clientY
+      let elementStartX = parseInt(this.elm.style.left)
+      let elementStartY = parseInt(this.elm.style.top)
+      focusedInstance = this
+      e.preventDefault()
+
+      const onMouseMove = (e: MouseEvent) => {
+        let newX = elementStartX + (e.clientX - dragStartX)
+        let newY = elementStartY + (e.clientY - dragStartY)
+        this.elm.style.left = `${newX}px`
+        this.elm.style.top = `${newY}px`
+      }
+
+      const onMouseUp = () => {
+        window.removeEventListener("mousemove", onMouseMove)
+        window.removeEventListener("mouseup", onMouseUp)
+      }
+
+      window.addEventListener("mousemove", onMouseMove)
+      window.addEventListener("mouseup", onMouseUp)
+    }
   }
 
   render() {

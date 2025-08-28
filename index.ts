@@ -8,7 +8,7 @@ let outputDPI = 300 // You can change this to whatever value you want, and every
 let scale = outputDPI / atlasDPI
 
 // The width of the canvas
-let lineWidth = 24 // this works out to A5 paper width
+let lineWidth = 32 // this works out to A5 paper width
 
 // These create empty space…
 let margin = 6 // left and right — measure in character widths
@@ -59,10 +59,7 @@ let getGlyphPosInAtlas = (c: string): [number, number] | [null, null] => {
 let atlasImg = new Image()
 atlasImg.src = `glyphs/regular.png`
 atlasImg.onload = () => {
-  // Create initial typewriter instance
-  let instance = new TypewriterInstance()
-  focusedInstance = instance
-  instance.render()
+  // No initial typewriter - user creates them by clicking in top-left corner
 }
 
 // TYPEWRITER INSTANCE CLASS #######################################################################
@@ -89,28 +86,41 @@ class TypewriterInstance {
 
     // Add drag functionality
     this.elm.onmousedown = (e) => {
-      let dragStartX = e.clientX
-      let dragStartY = e.clientY
-      let elementStartX = parseInt(this.elm.style.left)
-      let elementStartY = parseInt(this.elm.style.top)
-      focusedInstance = this
-      e.preventDefault()
-
-      const onMouseMove = (e: MouseEvent) => {
-        let newX = elementStartX + (e.clientX - dragStartX)
-        let newY = elementStartY + (e.clientY - dragStartY)
-        this.elm.style.left = `${newX}px`
-        this.elm.style.top = `${newY}px`
-      }
-
-      const onMouseUp = () => {
-        window.removeEventListener("mousemove", onMouseMove)
-        window.removeEventListener("mouseup", onMouseUp)
-      }
-
-      window.addEventListener("mousemove", onMouseMove)
-      window.addEventListener("mouseup", onMouseUp)
+      this.startDrag(e)
     }
+  }
+
+  focus() {
+    let previousFocus = focusedInstance
+    focusedInstance = this
+    if (previousFocus && previousFocus !== this) {
+      previousFocus.render()
+    }
+    this.render()
+  }
+
+  startDrag(e: MouseEvent) {
+    let dragStartX = e.clientX
+    let dragStartY = e.clientY
+    let elementStartX = parseInt(this.elm.style.left)
+    let elementStartY = parseInt(this.elm.style.top)
+    this.focus()
+    e.preventDefault()
+
+    const onMouseMove = (e: MouseEvent) => {
+      let newX = elementStartX + (e.clientX - dragStartX)
+      let newY = elementStartY + (e.clientY - dragStartY)
+      this.elm.style.left = `${newX}px`
+      this.elm.style.top = `${newY}px`
+    }
+
+    const onMouseUp = () => {
+      window.removeEventListener("mousemove", onMouseMove)
+      window.removeEventListener("mouseup", onMouseUp)
+    }
+
+    window.addEventListener("mousemove", onMouseMove)
+    window.addEventListener("mouseup", onMouseUp)
   }
 
   render() {
@@ -224,6 +234,15 @@ class TypewriterInstance {
 // INSTANCE MANAGEMENT ##############################################################################
 
 let focusedInstance: TypewriterInstance | null = null
+
+// Spawn new typewriter by clicking in top-left corner
+window.addEventListener("mousedown", (e) => {
+  if (e.clientX <= 50 && e.clientY <= 50) {
+    let newInstance = new TypewriterInstance(e.clientX, e.clientY)
+    newInstance.focus()
+    newInstance.startDrag(e)
+  }
+})
 
 window.addEventListener("keydown", (e) => {
   if (!focusedInstance) return

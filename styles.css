@@ -16,19 +16,13 @@ body {
   overflow: auto;
 }
 
-section {
-  width: 100%;
-  max-width: 72em;
-  padding: 1.5em 0.5em;
-  opacity: 0;
-}
-
 canvas.text {
   display: block;
   margin-inline: auto;
   width: calc(100% - 8em);
+  max-width: 48em;
   background: white;
-  box-shadow: 0 0.5px 1px #0001;
+  border-radius: 1px;
+  box-shadow: 0 1px 4px #0001;
   image-rendering: pixelated;
 }
-

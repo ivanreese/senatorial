@@ -4,7 +4,7 @@ import * as Automerge from "@automerge/automerge"
 let charactersPerInch = 11 // this is based on the actual typewriter
 let linesPerInch = 8 // ROUGHLY — this is based on the glyph scan Todd sent me
 let atlasDPI = 1200 // ROUGHLY — this is based on the glyph scan Todd sent me
-let outputDPI = 600 // You can change this to whatever value you want, and everything Just Works™
+let outputDPI = 300 // You can change this to whatever value you want, and everything Just Works™
 let scale = outputDPI / atlasDPI
 
 // The width of the canvas
@@ -59,161 +59,172 @@ let getGlyphPosInAtlas = (c: string): [number, number] | [null, null] => {
 let atlasImg = new Image()
 atlasImg.src = `glyphs/regular.png`
 atlasImg.onload = () => {
-  render()
-  ;(document.querySelector("section") as HTMLElement).style.opacity = "1"
+  // Create initial typewriter instance
+  let instance = new TypewriterInstance()
+  focusedInstance = instance
+  instance.render()
 }
 
-// RENDERING #######################################################################################
+// TYPEWRITER INSTANCE CLASS #######################################################################
 
-// Initialize the drawing canvases
-let elm = document.querySelector("canvas.text") as HTMLCanvasElement
-let ctx = elm.getContext("2d")!
+class TypewriterInstance {
+  elm = document.createElement("canvas")
+  ctx = this.elm.getContext("2d")!
+  characters: string[] = []
+  insertionPoint = 0
 
-// Position to draw the next char
-let cx = margin
-let cy = padding
-
-// Insertion point screen position
-let insertionX = margin * gw
-let insertionY = padding * lh
-
-let render = () => {
-  // The width of the drawing canvas
-  let w = gw * lineWidth
-
-  // We first do a layout-only pass so we can measure the height of the canvas
-  cx = margin // Reset the cursor position to the top left
-  cy = padding
-  drawAllText(characters, false)
-  let h = (cy + 1 + padding) * lh // Measure the height of the canvas
-
-  // Before we resize the canvas, check if we're scrolled to the bottom.
-  let oldHeight = elm.height
-
-  // Now that we've got the width and height, we can resize the canvas (which also clears it)
-  elm.width = w * scale
-  elm.height = h * scale
-  ctx.scale(scale, scale) // Have to set this every time we resize the canvas.
-
-  if (oldHeight < elm.height) document.body.scrollBy({ top: elm.height - oldHeight })
-
-  // The extra padding on chars means they overlap, so this allows them to overlap nicely
-  ctx.globalCompositeOperation = "darken" // Have to set this every time we resize the canvas.
-
-  // Improve visual centering
-  ctx.translate(0, verticalAlign)
-
-  // Draw all the chars
-  cx = margin // Reset the cursor position to the top left (again)
-  cy = padding
-  drawAllText(characters, true)
-
-  // Draw insertion point
-  ctx.fillStyle = `hsl(0, 70%, ${(Math.random() * 15 + 35) | 0}%)`
-  ctx.beginPath()
-  ctx.roundRect(insertionX + gw * 0.05, insertionY - lh * 0.2, gw * 0.15, gh * 1.4, gw * 0.05)
-  ctx.fill()
-}
-
-let drawAllText = (chars: string[], draw: boolean) => {
-  let charIndex = 0
-
-  for (let i = 0; i < chars.length; i++) {
-    let char = chars[i]
-
-    // Handle newlines
-    if (char === "\n") {
-      newline()
-      charIndex++
-      continue
-    }
-
-    // For spaces, just advance the cursor (and check if we need to wrap)
-    if (char === " ") {
-      if (cx >= lineWidth - margin) {
-        newline()
-      } else {
-        cx++
-      }
-      charIndex++
-      continue
-    }
-
-    // For non-space chars, check if the whole word fits on current line
-    let wordEnd = i
-    while (wordEnd < chars.length && chars[wordEnd] !== " " && chars[wordEnd] !== "\n") wordEnd++
-    let wordLength = wordEnd - i
-
-    // If word won't fit on current line, wrap to next line
-    if (cx + wordLength > lineWidth - margin) newline()
-
-    // Draw regular characters
-    let [gx, gy] = getGlyphPosInAtlas(char)
-    gx ??= 2257
-    gy ??= 97
-
-    // Draw the glyph
-    if (draw) {
-      let px = cx * gw
-      let py = cy * lh
-      ctx.drawImage(atlasImg, gx - pad, gy - pad, gw + pad * 2, gh + pad * 2, px - pad, py - pad, gw + pad * 2, gh + pad * 2)
-    }
-
-    cx++
-    charIndex++
-
-    // Check if this is where the insertion point should be
-    if (draw && charIndex === insertionPoint) {
-      insertionX = cx * gw
-      insertionY = cy * lh
-    }
-  }
-
-  // Check if insertion point is at the very end
-  if (draw && charIndex === insertionPoint) {
-    insertionX = cx * gw
-    insertionY = cy * lh
-  }
-}
-
-// Move cursor to beginning of next line
-let newline = () => {
+  // Position to draw the next char
   cx = margin
-  cy++
+  cy = padding
+
+  // Insertion point screen position
+  insertionX = margin * gw
+  insertionY = padding * lh
+
+  constructor() {
+    this.elm.className = "text"
+    document.body.appendChild(this.elm)
+    this.elm.onclick = () => (focusedInstance = this)
+  }
+
+  render() {
+    // The width of the drawing canvas
+    let w = gw * lineWidth
+
+    // We first do a layout-only pass so we can measure the height of the canvas
+    this.cx = margin // Reset the cursor position to the top left
+    this.cy = padding
+    this.drawAllText(false)
+    let h = (this.cy + 1 + padding) * lh // Measure the height of the canvas
+
+    // Before we resize the canvas, check if we're scrolled to the bottom.
+    let oldHeight = this.elm.height
+
+    // Now that we've got the width and height, we can resize the canvas (which also clears it)
+    this.elm.width = w * scale
+    this.elm.height = h * scale
+    this.ctx.scale(scale, scale) // Have to set this every time we resize the canvas.
+
+    if (oldHeight < this.elm.height) document.body.scrollBy({ top: this.elm.height - oldHeight })
+
+    // The extra padding on chars means they overlap, so this allows them to overlap nicely
+    this.ctx.globalCompositeOperation = "darken" // Have to set this every time we resize the canvas.
+
+    // Improve visual centering
+    this.ctx.translate(0, verticalAlign)
+
+    // Draw all the chars
+    this.cx = margin // Reset the cursor position to the top left (again)
+    this.cy = padding
+    this.drawAllText(true)
+
+    // Draw insertion point only if this instance is focused
+    if (focusedInstance === this) {
+      this.ctx.fillStyle = `hsl(0, 70%, ${(Math.random() * 15 + 35) | 0}%)`
+      this.ctx.beginPath()
+      this.ctx.roundRect(this.insertionX + gw * 0.05, this.insertionY - lh * 0.2, gw * 0.15, gh * 1.4, gw * 0.05)
+      this.ctx.fill()
+    }
+  }
+
+  drawAllText(draw: boolean) {
+    let charIndex = 0
+
+    for (let i = 0; i < this.characters.length; i++) {
+      let char = this.characters[i]
+
+      // Handle newlines
+      if (char === "\n") {
+        this.newline()
+        charIndex++
+        continue
+      }
+
+      // For spaces, just advance the cursor (and check if we need to wrap)
+      if (char === " ") {
+        if (this.cx >= lineWidth - margin) {
+          this.newline()
+        } else {
+          this.cx++
+        }
+        charIndex++
+        continue
+      }
+
+      // For non-space chars, check if the whole word fits on current line
+      let wordEnd = i
+      while (wordEnd < this.characters.length && this.characters[wordEnd] !== " " && this.characters[wordEnd] !== "\n") wordEnd++
+      let wordLength = wordEnd - i
+
+      // If word won't fit on current line, wrap to next line
+      if (this.cx + wordLength > lineWidth - margin) this.newline()
+
+      // Draw regular characters
+      let [gx, gy] = getGlyphPosInAtlas(char)
+      gx ??= 2257
+      gy ??= 97
+
+      // Draw the glyph
+      if (draw) {
+        let px = this.cx * gw
+        let py = this.cy * lh
+        this.ctx.drawImage(atlasImg, gx - pad, gy - pad, gw + pad * 2, gh + pad * 2, px - pad, py - pad, gw + pad * 2, gh + pad * 2)
+      }
+
+      this.cx++
+      charIndex++
+
+      // Check if this is where the insertion point should be
+      if (draw && charIndex === this.insertionPoint) {
+        this.insertionX = this.cx * gw
+        this.insertionY = this.cy * lh
+      }
+    }
+
+    // Check if insertion point is at the very end
+    if (draw && charIndex === this.insertionPoint) {
+      this.insertionX = this.cx * gw
+      this.insertionY = this.cy * lh
+    }
+  }
+
+  // Move cursor to beginning of next line
+  newline() {
+    this.cx = margin
+    this.cy++
+  }
 }
 
-// INPUT HANDLING ##################################################################################
+// INSTANCE MANAGEMENT ##############################################################################
 
-// Array to store typed characters
-let characters: string[] = []
-
-// Insertion point position in the characters array
-let insertionPoint = 0
+let focusedInstance: TypewriterInstance | null = null
 
 window.addEventListener("keydown", (e) => {
+  if (!focusedInstance) return
+
   if (e.key.length === 1) {
     // Regular character - insert at insertion point
-    characters.splice(insertionPoint, 0, e.key)
-    insertionPoint++
-    render()
-  } else if (e.key === "Backspace" && insertionPoint > 0) {
+    focusedInstance.characters.splice(focusedInstance.insertionPoint, 0, e.key)
+    focusedInstance.insertionPoint++
+    focusedInstance.render()
+  } else if (e.key === "Backspace" && focusedInstance.insertionPoint > 0) {
     // Backspace - remove character before insertion point
-    characters.splice(insertionPoint - 1, 1)
-    insertionPoint--
-    render()
+    focusedInstance.characters.splice(focusedInstance.insertionPoint - 1, 1)
+    focusedInstance.insertionPoint--
+    focusedInstance.render()
   } else if (e.key === "Enter") {
     // Enter - add newline at insertion point
-    characters.splice(insertionPoint, 0, "\n")
-    insertionPoint++
-    render()
-  } else if (e.key === "ArrowLeft" && insertionPoint > 0) {
+    focusedInstance.characters.splice(focusedInstance.insertionPoint, 0, "\n")
+    focusedInstance.insertionPoint++
+    focusedInstance.render()
+  } else if (e.key === "ArrowLeft" && focusedInstance.insertionPoint > 0) {
     // Move insertion point left
-    insertionPoint--
-    render()
-  } else if (e.key === "ArrowRight" && insertionPoint < characters.length) {
+    focusedInstance.insertionPoint--
+    focusedInstance.render()
+  } else if (e.key === "ArrowRight" && focusedInstance.insertionPoint < focusedInstance.characters.length) {
     // Move insertion point right
-    insertionPoint++
-    render()
+    focusedInstance.insertionPoint++
+    focusedInstance.render()
   }
 
   e.preventDefault()

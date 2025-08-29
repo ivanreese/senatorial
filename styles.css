@@ -5,7 +5,8 @@
 body {
   margin: 0;
   font-family: system-ui;
-  background: hsl(40 20% 90%);
+  /* background: hsl(40 20% 90%); */
+  background: #282a36;
   overflow: auto;
 }
 

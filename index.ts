@@ -71,7 +71,7 @@ atlasImg.onload = () => {
   // Create sync server at center-top of screen
   syncServer = new SyncServer(window.innerWidth / 2 - 200, 100)
   syncServer.render()
-  
+
   // No initial regular typewriter - user creates them by clicking in top-left corner
 }
 
@@ -132,7 +132,7 @@ class TypewriterInstance {
     this.doc = newDoc
     console.log("Doc after applying changes:", this.doc.characters)
     this.render()
-    
+
     // Don't send changes back to sync server when applying from particles
     // (this would create infinite loops)
   }
@@ -141,7 +141,7 @@ class TypewriterInstance {
   sendChangeToSyncServer() {
     // Don't send if we ARE the sync server, or if sync server doesn't exist
     if (this instanceof SyncServer || !syncServer) return
-    
+
     const changes = this.getDocumentChanges()
     if (changes.length > 0) {
       console.log("Sending", changes.length, "changes to sync server via particle")
@@ -192,10 +192,10 @@ class TypewriterInstance {
     this.insertionPoint++
     console.log("Character inserted:", char, "Doc characters now:", this.doc.characters)
     console.log("Insertion point:", this.insertionPoint)
-    
+
     // Send change to sync server via particle (if this isn't the sync server)
     this.sendChangeToSyncServer()
-    
+
     this.render()
   }
 
@@ -207,10 +207,10 @@ class TypewriterInstance {
       })
       this.insertionPoint--
       console.log("Character deleted, Doc characters now:", this.doc.characters)
-      
+
       // Send change to sync server via particle
       this.sendChangeToSyncServer()
-      
+
       this.render()
     }
   }
@@ -222,10 +222,10 @@ class TypewriterInstance {
     })
     this.insertionPoint++
     console.log("Newline inserted, Doc characters now:", this.doc.characters)
-    
+
     // Send change to sync server via particle
     this.sendChangeToSyncServer()
-    
+
     this.render()
   }
 
@@ -367,16 +367,16 @@ class Particle {
   speed = 0.02 // Animation speed (0-1 per frame)
   size = 8
   color = "hsl(300, 80%, 60%)"
-  
+
   // Change data this particle is carrying
   changes: Uint8Array[]
   source: TypewriterInstance
   target: TypewriterInstance
 
   constructor(
-    startX: number, 
-    startY: number, 
-    targetX: number, 
+    startX: number,
+    startY: number,
+    targetX: number,
     targetY: number,
     changes: Uint8Array[],
     source: TypewriterInstance,
@@ -391,22 +391,33 @@ class Particle {
     this.changes = changes
     this.source = source
     this.target = target
-    
+
     console.log("Particle created carrying", changes.length, "changes")
   }
 
   update() {
     if (this.progress < 1) {
       this.progress += this.speed
-      
+
+      // Debug logging for broadcast particles
+      if (this.source instanceof SyncServer) {
+        console.log(`Broadcast particle progress: ${this.progress.toFixed(3)}, pos: (${this.x.toFixed(0)}, ${this.y.toFixed(0)})`)
+      }
+
       // Smooth easing animation
       const eased = 1 - Math.pow(1 - this.progress, 3) // Ease out cubic
-      
+
       this.x = this.startX + (this.targetX - this.startX) * eased
       this.y = this.startY + (this.targetY - this.startY) * eased
-      
+
       return false // Still animating
     }
+    
+    // Debug when complete
+    if (this.source instanceof SyncServer) {
+      console.log("Broadcast particle completed animation!")
+    }
+    
     return true // Animation complete
   }
 
@@ -427,21 +438,21 @@ class ParticleManager {
     // Get positions of source and target
     const sourceRect = source.elm.getBoundingClientRect()
     const targetRect = target.elm.getBoundingClientRect()
-    
+
     const startX = sourceRect.left + sourceRect.width / 2
     const startY = sourceRect.top + sourceRect.height / 2
     const targetX = targetRect.left + targetRect.width / 2
     const targetY = targetRect.top + targetRect.height / 2
-    
+
     const particle = new Particle(startX, startY, targetX, targetY, changes, source, target)
     this.particles.push(particle)
     console.log("Change particle added, total particles:", this.particles.length)
-    
+
     // Start animation loop if not running
     if (!this.animationId) {
       this.startAnimation()
     }
-    
+
     return particle
   }
 
@@ -450,12 +461,12 @@ class ParticleManager {
     const particle = new Particle(startX, startY, targetX, targetY, [], null as any, null as any)
     this.particles.push(particle)
     console.log("Test particle added, total particles:", this.particles.length)
-    
+
     // Start animation loop if not running
     if (!this.animationId) {
       this.startAnimation()
     }
-    
+
     return particle
   }
 
@@ -463,7 +474,7 @@ class ParticleManager {
     const animate = () => {
       this.update()
       this.draw()
-      
+
       if (this.particles.length > 0) {
         this.animationId = requestAnimationFrame(animate)
       } else {
@@ -474,15 +485,29 @@ class ParticleManager {
   }
 
   update() {
+    console.log(`ParticleManager update: ${this.particles.length} particles`)
+    
+    // Collect completed particles first
+    const completedParticles: Particle[] = []
+    
     // Update all particles and remove completed ones
-    this.particles = this.particles.filter(particle => {
+    this.particles = this.particles.filter((particle) => {
       const isComplete = particle.update()
       if (isComplete) {
         console.log("Particle animation complete")
-        this.onParticleComplete(particle)
+        completedParticles.push(particle)
       }
       return !isComplete
     })
+    
+    console.log(`After update: ${this.particles.length} particles remaining`)
+    
+    // Process completed particles AFTER filtering is done
+    completedParticles.forEach(particle => {
+      this.onParticleComplete(particle)
+    })
+    
+    console.log(`After completion callbacks: ${this.particles.length} particles`)
   }
 
   draw() {
@@ -490,10 +515,10 @@ class ParticleManager {
     if (!this.overlayCanvas) {
       this.createOverlay()
     }
-    
+
     this.overlayCtx.clearRect(0, 0, window.innerWidth, window.innerHeight)
-    
-    this.particles.forEach(particle => {
+
+    this.particles.forEach((particle) => {
       particle.draw(this.overlayCtx)
     })
   }
@@ -502,36 +527,44 @@ class ParticleManager {
   overlayCtx!: CanvasRenderingContext2D
 
   createOverlay() {
-    this.overlayCanvas = document.createElement('canvas')
-    this.overlayCanvas.style.position = 'fixed'
-    this.overlayCanvas.style.top = '0'
-    this.overlayCanvas.style.left = '0'
-    this.overlayCanvas.style.width = '100vw'
-    this.overlayCanvas.style.height = '100vh'
-    this.overlayCanvas.style.pointerEvents = 'none'
-    this.overlayCanvas.style.zIndex = '1000'
+    this.overlayCanvas = document.createElement("canvas")
+    this.overlayCanvas.style.position = "fixed"
+    this.overlayCanvas.style.top = "0"
+    this.overlayCanvas.style.left = "0"
+    this.overlayCanvas.style.width = "100vw"
+    this.overlayCanvas.style.height = "100vh"
+    this.overlayCanvas.style.pointerEvents = "none"
+    this.overlayCanvas.style.zIndex = "1000"
     this.overlayCanvas.width = window.innerWidth
     this.overlayCanvas.height = window.innerHeight
-    
-    this.overlayCtx = this.overlayCanvas.getContext('2d')!
+
+    this.overlayCtx = this.overlayCanvas.getContext("2d")!
     document.body.appendChild(this.overlayCanvas)
-    
+
     console.log("Particle overlay canvas created")
   }
 
   onParticleComplete(particle: Particle) {
     console.log("Particle reached target")
-    
+    console.log("  - Changes length:", particle.changes.length)
+    console.log("  - Target exists:", !!particle.target)
+    console.log("  - Target type:", particle.target.constructor.name)
+    console.log("  - Source type:", particle.source.constructor.name)
+
     // Apply changes if this particle was carrying them
     if (particle.changes.length > 0 && particle.target) {
       console.log("Applying", particle.changes.length, "changes from particle to target")
-      
+
       // Use special method for sync server to avoid broadcasting
       if (particle.target instanceof SyncServer) {
-        (particle.target as SyncServer).applyChangesFromParticle(particle.changes)
+        console.log("  -> Applying to SyncServer via applyChangesFromParticle")
+        ;(particle.target as SyncServer).applyChangesFromParticle(particle.changes, particle.source)
       } else {
+        console.log("  -> Applying to regular TypewriterInstance via applyChanges")
         particle.target.applyChanges(particle.changes)
       }
+    } else {
+      console.log("  -> No changes to apply (length=0 or no target)")
     }
   }
 }
@@ -544,62 +577,63 @@ const particleManager = new ParticleManager()
 class SyncServer extends TypewriterInstance {
   constructor(x: number, y: number) {
     super(x, y)
-    
+
     // Override styling for sync server
     this.elm.style.backgroundColor = "hsl(200, 70%, 95%)"
     this.elm.style.border = "2px solid hsl(200, 70%, 70%)"
     this.elm.style.borderRadius = "8px"
-    
+
     console.log("SyncServer created at", x, y)
   }
 
   // Apply changes without broadcasting (for particle delivery)
-  applyChangesFromParticle(changes: Uint8Array[]) {
+  applyChangesFromParticle(changes: Uint8Array[], sourceTypewriter?: TypewriterInstance) {
     console.log("SyncServer: Applying changes from particle and broadcasting via particles")
-    
+
     // Apply changes to self
     super.applyChanges(changes)
-    
-    // Broadcast to all other typewriters via particles
-    this.broadcastChangesViaParticles(changes)
+
+    // Broadcast to all other typewriters via particles (excluding source)
+    this.broadcastChangesViaParticles(changes, sourceTypewriter)
   }
 
   // Override applyChanges to add broadcasting (for manual sync)
   applyChanges(changes: Uint8Array[]) {
     console.log("SyncServer: Applying changes and broadcasting...")
-    
+
     // Apply changes to self
     super.applyChanges(changes)
-    
+
     // Broadcast to all other typewriters (not the sync server itself)
     this.broadcastChanges(changes)
   }
 
   // Broadcast changes via particles
-  broadcastChangesViaParticles(changes: Uint8Array[]) {
-    const targetTypewriters = allTypewriters.filter(tw => tw !== this)
+  broadcastChangesViaParticles(changes: Uint8Array[], excludeSource?: TypewriterInstance) {
+    const targetTypewriters = allTypewriters.filter((tw) => tw !== this && tw !== excludeSource)
     console.log("SyncServer: Broadcasting via particles to", targetTypewriters.length, "typewriters")
-    console.log("Total typewriters:", allTypewriters.length, "excluding sync server:", targetTypewriters.length)
-    
+    console.log("Total typewriters:", allTypewriters.length, "excluding sync server and source:", targetTypewriters.length)
+
     targetTypewriters.forEach((typewriter, index) => {
       console.log(`Sending broadcast particle ${index + 1} to typewriter...`)
       particleManager.addChangeParticle(this, typewriter, changes)
     })
-    
+
     console.log("SyncServer: Broadcast particles sent")
   }
 
   // Legacy immediate broadcast (for manual sync)
   broadcastChanges(changes: Uint8Array[]) {
     console.log("SyncServer: Broadcasting immediately to", allTypewriters.length, "typewriters")
-    
-    allTypewriters.forEach(typewriter => {
-      if (typewriter !== this) { // Don't broadcast to self
+
+    allTypewriters.forEach((typewriter) => {
+      if (typewriter !== this) {
+        // Don't broadcast to self
         console.log("Broadcasting to typewriter...")
         typewriter.applyChanges(changes)
       }
     })
-    
+
     console.log("SyncServer: Broadcast complete")
   }
 }
@@ -616,7 +650,7 @@ function copyChanges(source: TypewriterInstance, target: TypewriterInstance) {
   console.log("=== COPYING CHANGES ===")
   console.log("From:", source === syncServer ? "SyncServer" : "Typewriter")
   console.log("To:", target === syncServer ? "SyncServer" : "Typewriter")
-  
+
   const changes = source.extractChanges()
   if (changes.length > 0) {
     target.applyChanges(changes)
@@ -638,7 +672,7 @@ window.addEventListener("mousedown", (e) => {
 
 window.addEventListener("keydown", (e) => {
   if (!focusedInstance) return
-  
+
   // Manual change extraction - press Ctrl+E
   if (e.key === "e" && e.ctrlKey) {
     console.log("=== MANUAL CHANGE EXTRACTION ===")
@@ -698,7 +732,7 @@ window.addEventListener("keydown", (e) => {
     return
   }
 
-  // Copy changes FROM sync server - press Ctrl+R  
+  // Copy changes FROM sync server - press Ctrl+R
   if (e.key === "r" && e.ctrlKey) {
     if (syncServer && focusedInstance !== syncServer) {
       copyChanges(syncServer, focusedInstance)
@@ -713,22 +747,22 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "p" && e.ctrlKey) {
     if (syncServer) {
       console.log("Spawning test particle from focused instance to sync server")
-      
+
       // Get positions of source and target
       const sourceRect = focusedInstance.elm.getBoundingClientRect()
       const targetRect = syncServer.elm.getBoundingClientRect()
-      
+
       const startX = sourceRect.left + sourceRect.width / 2
       const startY = sourceRect.top + sourceRect.height / 2
       const targetX = targetRect.left + targetRect.width / 2
       const targetY = targetRect.top + targetRect.height / 2
-      
+
       particleManager.addParticle(startX, startY, targetX, targetY)
     }
     e.preventDefault()
     return
   }
-  
+
   if (e.key.length === 1) return focusedInstance.insertCharacter(e.key)
   if (e.key === "Backspace") return focusedInstance.deleteCharacter()
   if (e.key === "Enter") return focusedInstance.insertNewline()

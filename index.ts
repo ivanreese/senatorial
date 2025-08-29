@@ -1,5 +1,9 @@
 import * as Automerge from "@automerge/automerge"
 
+// TYPES ###########################################################################################
+
+type Position = { x: number; y: number }
+
 // AUTOMERGE SETUP ################################################################################
 
 // Create canonical root document that all typewriter docs will fork from
@@ -204,13 +208,53 @@ class Typewriter {
     this.render()
   }
 
+  // Convert grid position to screen coordinates
+  gridToScreenCoords(gridX: number, gridY: number): Position {
+    const screenX = this.left + (gridX * gw + gw / 2) * scale
+    const screenY = this.top + (gridY * lh + gh / 2) * scale
+    return { x: screenX, y: screenY }
+  }
+
+  // Calculate where changes will be applied and return screen coordinates
+  calculateChangeTargetPosition(changes: Uint8Array[]): Position {
+    // Speculatively apply changes to a clone to get the after state
+    const [afterDoc] = Automerge.applyChanges(Automerge.clone(this.doc), changes)
+
+    const beforeChars = this.doc.characters
+    const afterChars = afterDoc.characters
+
+    // Find the first difference between before and after
+    let changeIndex = 0
+    const minLength = Math.min(beforeChars.length, afterChars.length)
+
+    // Find first differing position
+    for (let i = 0; i < minLength; i++) {
+      if (beforeChars[i] !== afterChars[i]) {
+        changeIndex = i
+        break
+      }
+    }
+
+    // If no differences found in common length, change is at the end of shorter string
+    if (changeIndex === 0 && beforeChars.length !== afterChars.length) {
+      changeIndex = minLength
+    }
+
+    // Get grid position at the change index
+    const gridPos = this.drawAllText(false, changeIndex)
+    if (!gridPos) {
+      // Fallback to current position if drawAllText doesn't return position
+      return { x: this.left, y: this.top }
+    }
+
+    return this.gridToScreenCoords(gridPos.cx, gridPos.cy)
+  }
+
   render() {
     // The width of the drawing canvas
     let w = gw * lineWidth
 
     // We first do a layout-only pass so we can measure the height of the canvas
-    this.cx = margin // Reset the cursor position to the top left
-    this.cy = padding
     this.drawAllText(false)
     let h = (this.cy + 1 + padding) * lh // Measure the height of the canvas
 
@@ -231,8 +275,6 @@ class Typewriter {
     this.ctx.translate(0, verticalAlign)
 
     // Draw all the chars
-    this.cx = margin // Reset the cursor position to the top left (again)
-    this.cy = padding
     this.drawAllText(true)
 
     // Draw insertion point only if this instance is focused
@@ -244,11 +286,19 @@ class Typewriter {
     }
   }
 
-  drawAllText(draw: boolean) {
+  drawAllText(draw: boolean, stopAtCharIndex?: number): { cx: number; cy: number } | void {
+    this.cx = margin // Reset the cursor position to the top left
+    this.cy = padding
+
     let charIndex = 0
     let characters = this.doc.characters
 
     for (let i = 0; i < characters.length; i++) {
+      // Check if we should stop at this character index
+      if (stopAtCharIndex !== undefined && charIndex >= stopAtCharIndex) {
+        return { cx: this.cx, cy: this.cy }
+      }
+
       let char = characters[i]
 
       // Handle newlines
@@ -304,6 +354,11 @@ class Typewriter {
       this.insertionX = this.cx * gw
       this.insertionY = this.cy * lh
     }
+
+    // If we have a stopAtCharIndex and reached the end, return final position
+    if (stopAtCharIndex !== undefined && charIndex >= stopAtCharIndex) {
+      return { cx: this.cx, cy: this.cy }
+    }
   }
 
   // Move cursor to beginning of next line
@@ -322,31 +377,27 @@ class Particle {
   size = 8
   color = "hsl(300, 80%, 60%)"
 
-  constructor(
-    public changes: Uint8Array[],
-    public source: Typewriter,
-    public target: Typewriter,
-    public x = 0,
-    public y = 0,
-    public targetX = 0,
-    public targetY = 0
-  ) {}
+  constructor(public changes: Uint8Array[], public source: Typewriter, public target: Typewriter, public position: Position) {}
 
   update() {
-    let dx = this.targetX - this.x
-    let dy = this.targetY - this.y
-    let angle = Math.atan2(dy, dx)
+    const targetPos = this.target.calculateChangeTargetPosition(this.changes)
+    let dx = targetPos.x - this.position.x
+    let dy = targetPos.y - this.position.y
+    this.position.x += dx / 20
+    this.position.y += dy / 20
+
+    // let angle = Math.atan2(dy, dx)
     let dist = Math.hypot(dx, dy)
-    this.speed += Math.min(dist, 0.1)
-    this.x += Math.cos(angle) * this.speed
-    this.y += Math.sin(angle) * this.speed
+    // this.speed += Math.min(dist, 0.1)
+    // this.position.x += Math.cos(angle) * this.speed
+    // this.position.y += Math.sin(angle) * this.speed
     return dist < 10
   }
 
   draw(ctx: CanvasRenderingContext2D) {
     ctx.fillStyle = this.color
     ctx.beginPath()
-    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2)
+    ctx.arc(this.position.x, this.position.y, this.size, 0, Math.PI * 2)
     ctx.fill()
   }
 }
@@ -366,11 +417,8 @@ class ParticleManager {
 
   // Add particle carrying changes
   addChangeParticle(source: Typewriter, target: Typewriter, changes: Uint8Array[]) {
-    const startX = source.left + (source.insertionX + gw / 2) * scale
-    const startY = source.top + (source.insertionY + gh / 2) * scale
-    const targetX = target.left
-    const targetY = target.top
-    this.particles.push(new Particle(changes, source, target, startX, startY, targetX, targetY))
+    const startPos = source.gridToScreenCoords(source.insertionX / gw, source.insertionY / lh)
+    this.particles.push(new Particle(changes, source, target, startPos))
   }
 
   update() {

@@ -20,18 +20,26 @@ const renormalized = (i: number, min1: number, max1: number, min2: number, max2:
   return denormalized(n, min2, max2)
 }
 
-// GLOBAL CANVAS FOR OVERLAYS ######################################################################
+// GLOBAL CANVASES FOR LAYERS #######################################################################
 
+const dpr = window.devicePixelRatio || 1
+
+// Underlay canvas for connection lines (behind typewriters)
+const underlayCanvas = document.createElement("canvas")
+const underlayCtx = underlayCanvas.getContext("2d")!
+underlayCanvas.className = "canvas-layer underlay"
+underlayCanvas.width = window.innerWidth * dpr
+underlayCanvas.height = window.innerHeight * dpr
+underlayCtx.scale(dpr, dpr)
+document.body.appendChild(underlayCanvas)
+
+// Overlay canvas for particles (above typewriters)
 const overlayCanvas = document.createElement("canvas")
 const overlayCtx = overlayCanvas.getContext("2d")!
-overlayCanvas.className = "overlay"
-overlayCanvas.width = window.innerWidth
-overlayCanvas.height = window.innerHeight
-overlayCanvas.style.position = "fixed"
-overlayCanvas.style.top = "0"
-overlayCanvas.style.left = "0"
-overlayCanvas.style.pointerEvents = "none"
-overlayCanvas.style.zIndex = "1000"
+overlayCanvas.className = "canvas-layer overlay"
+overlayCanvas.width = window.innerWidth * dpr
+overlayCanvas.height = window.innerHeight * dpr
+overlayCtx.scale(dpr, dpr)
 document.body.appendChild(overlayCanvas)
 
 // TYPES ###########################################################################################
@@ -58,7 +66,7 @@ const rootDoc = Automerge.change(Automerge.init<{ text: string }>(), (doc) => {
 
 // SYNC CONFIGURATION ##############################################################################
 
-const SYNC_RANGE = 500 // Distance in pixels for server-to-server communication
+const SYNC_RANGE = 400 // Distance in pixels for server-to-server communication
 
 // PAGE LAYOUT ####################################################################################
 
@@ -73,7 +81,7 @@ let scale = (0.5 * outputDPI) / atlasDPI
 let lineWidth = 32 // this works out to A5 paper width
 
 // These create empty space…
-let margin = 6 // left and right — measure in character widths
+let margin = 2 // left and right — measure in character widths
 let padding = 1 // on the top and bottom — measure in line heights
 
 // ATLAS ###########################################################################################
@@ -600,12 +608,12 @@ class ParticleManager {
       }
     })
 
-    // Clear and render overlay content
-    overlayCtx.clearRect(0, 0, window.innerWidth, window.innerHeight)
+    // Clear and render underlay content (connection lines)
+    underlayCtx.clearRect(0, 0, window.innerWidth, window.innerHeight)
 
-    // Render sync server connections
+    // Render sync server connections on underlay
     allSyncServers.forEach((server) => {
-      overlayCtx.lineWidth = 3
+      underlayCtx.lineWidth = 3
 
       // Get server rectangle
       const serverDims = getTypewriterDimensions(server)
@@ -637,22 +645,23 @@ class ParticleManager {
 
         if (centerDist <= SYNC_RANGE) {
           // Calculate fade: 1.0 at 0-250px, fade to 0.1 from 250-500px
-          const alpha = renormalized(centerDist, SYNC_RANGE * 0.5, SYNC_RANGE, 1.0, 0.1, true)
+          const alpha = renormalized(centerDist, SYNC_RANGE * 0.5, SYNC_RANGE, 0.5, 0.1, true)
 
           // Draw line between centers with fade
           const serverCenter = { x: serverRect.left + serverRect.width / 2, y: serverRect.top + serverRect.height / 2 }
           const typewriterCenter = { x: typewriterRect.left + typewriterRect.width / 2, y: typewriterRect.top + typewriterRect.height / 2 }
 
-          overlayCtx.strokeStyle = `rgba(255, 255, 255, ${alpha})`
-          overlayCtx.beginPath()
-          overlayCtx.moveTo(serverCenter.x, serverCenter.y)
-          overlayCtx.lineTo(typewriterCenter.x, typewriterCenter.y)
-          overlayCtx.stroke()
+          underlayCtx.strokeStyle = `rgba(255, 255, 255, ${alpha})`
+          underlayCtx.beginPath()
+          underlayCtx.moveTo(serverCenter.x, serverCenter.y)
+          underlayCtx.lineTo(typewriterCenter.x, typewriterCenter.y)
+          underlayCtx.stroke()
         }
       })
     })
 
-    // Render particles
+    // Clear and render overlay content (particles)
+    overlayCtx.clearRect(0, 0, window.innerWidth, window.innerHeight)
     this.particles.forEach((particle) => particle.draw(overlayCtx))
   }
 }

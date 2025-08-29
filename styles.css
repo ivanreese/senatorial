@@ -42,13 +42,20 @@ canvas.server {
   border: 2px solid hsl(200, 70%, 70%);
 }
 
-canvas.particles {
-  position: absolute;
+.canvas-layer {
+  position: fixed;
   top: 0;
   left: 0;
+  pointer-events: none;
   width: 100vw;
   height: 100vh;
-  pointer-events: none;
+}
+
+.underlay {
+  z-index: -1;
+}
+
+.overlay {
   z-index: 1000;
 }
 

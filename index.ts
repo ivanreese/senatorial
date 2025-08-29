@@ -68,7 +68,11 @@ let getGlyphPosInAtlas = (c: string): [number, number] | [null, null] => {
 let atlasImg = new Image()
 atlasImg.src = `glyphs/regular.png`
 atlasImg.onload = () => {
-  // No initial typewriter - user creates them by clicking in top-left corner
+  // Create sync server at center-top of screen
+  syncServer = new SyncServer(window.innerWidth / 2 - 200, 100)
+  syncServer.render()
+  
+  // No initial regular typewriter - user creates them by clicking in top-left corner
 }
 
 // TYPEWRITER INSTANCE CLASS #######################################################################
@@ -101,6 +105,13 @@ class TypewriterInstance {
 
     console.log("TypewriterInstance created with doc:", this.doc)
     console.log("Doc has characters field:", "characters" in this.doc)
+  }
+
+  // Helper method to get changes since last tracked state
+  getDocumentChanges() {
+    const changes = Automerge.getChanges(this.previousDocState, this.doc)
+    console.log("Document changes since last state:", changes)
+    return changes
   }
 
   focus() {
@@ -144,6 +155,7 @@ class TypewriterInstance {
     this.insertionPoint++
     console.log("Character inserted:", char, "Doc characters now:", this.doc.characters)
     console.log("Insertion point:", this.insertionPoint)
+    this.getDocumentChanges() // Track the change we just made
     this.render()
   }
 
@@ -155,6 +167,7 @@ class TypewriterInstance {
       })
       this.insertionPoint--
       console.log("Character deleted, Doc characters now:", this.doc.characters)
+      this.getDocumentChanges() // Track the change we just made
       this.render()
     }
   }
@@ -166,6 +179,7 @@ class TypewriterInstance {
     })
     this.insertionPoint++
     console.log("Newline inserted, Doc characters now:", this.doc.characters)
+    this.getDocumentChanges() // Track the change we just made
     this.render()
   }
 
@@ -294,9 +308,25 @@ class TypewriterInstance {
   }
 }
 
+// SYNC SERVER CLASS ################################################################################
+
+class SyncServer extends TypewriterInstance {
+  constructor(x: number, y: number) {
+    super(x, y)
+    
+    // Override styling for sync server
+    this.elm.style.backgroundColor = "hsl(200, 70%, 95%)"
+    this.elm.style.border = "2px solid hsl(200, 70%, 70%)"
+    this.elm.style.borderRadius = "8px"
+    
+    console.log("SyncServer created at", x, y)
+  }
+}
+
 // INSTANCE MANAGEMENT ##############################################################################
 
 let focusedInstance: TypewriterInstance | null = null
+let syncServer: SyncServer | null = null
 
 // Spawn new typewriter by clicking in top-left corner
 window.addEventListener("mousedown", (e) => {

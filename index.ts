@@ -57,6 +57,22 @@ function getTypewriterDimensions(typewriter: Typewriter) {
   return { width, height }
 }
 
+// Calculate edge-to-edge distance between two typewriters
+function getEdgeDistance(tw1: Typewriter, tw2: Typewriter): number {
+  const dims1 = getTypewriterDimensions(tw1)
+  const dims2 = getTypewriterDimensions(tw2)
+  
+  const centerToCenter = {
+    x: tw1.left + dims1.width / 2 - (tw2.left + dims2.width / 2),
+    y: tw1.top + dims1.height / 2 - (tw2.top + dims2.height / 2)
+  }
+  
+  return Math.hypot(
+    Math.max(0, Math.abs(centerToCenter.x) - dims1.width / 2 - dims2.width / 2),
+    Math.max(0, Math.abs(centerToCenter.y) - dims1.height / 2 - dims2.height / 2)
+  )
+}
+
 // AUTOMERGE SETUP ################################################################################
 
 // Create canonical root document that all typewriter docs will fork from
@@ -66,7 +82,7 @@ const rootDoc = Automerge.change(Automerge.init<{ text: string }>(), (doc) => {
 
 // SYNC CONFIGURATION ##############################################################################
 
-const SYNC_RANGE = 400 // Distance in pixels for server-to-server communication
+const SYNC_RANGE = 200 // Distance in pixels for server-to-server communication
 
 // PAGE LAYOUT ####################################################################################
 
@@ -241,7 +257,7 @@ class Typewriter {
     let syncServer: SyncServer | null = null
     let closeness = Infinity
     for (let ss of allSyncServers) {
-      let dist = Math.hypot(this.left - ss.left, this.top - ss.top)
+      let dist = getEdgeDistance(this, ss)
       if (dist <= SYNC_RANGE && dist < closeness) {
         syncServer = ss
         closeness = dist
@@ -581,7 +597,7 @@ class ParticleManager {
         allSyncServers
           .filter((server) => server !== particle.target && server !== particle.source)
           .forEach((server) => {
-            const dist = Math.hypot(particle.target.left - server.left, particle.target.top - server.top)
+            const dist = getEdgeDistance(particle.target, server)
             if (dist <= SYNC_RANGE) {
               particleManager.addChangeParticle(particle.target, server, particle.changes)
             }
@@ -595,7 +611,7 @@ class ParticleManager {
             let closestServer: SyncServer | null = null
             let closeness = Infinity
             for (let ss of allSyncServers) {
-              let dist = Math.hypot(typewriter.left - ss.left, typewriter.top - ss.top)
+              let dist = getEdgeDistance(typewriter, ss)
               if (dist <= SYNC_RANGE && dist < closeness) {
                 closestServer = ss
                 closeness = dist
@@ -637,15 +653,12 @@ class ParticleManager {
           height: typewriterDims.height,
         }
 
-        // Check distance between rectangle centers
-        const centerDist = Math.hypot(
-          serverRect.left + serverRect.width / 2 - (typewriterRect.left + typewriterRect.width / 2),
-          serverRect.top + serverRect.height / 2 - (typewriterRect.top + typewriterRect.height / 2)
-        )
+        // Check distance between rectangle edges
+        const edgeDist = getEdgeDistance(server, typewriter)
 
-        if (centerDist <= SYNC_RANGE) {
-          // Calculate fade: 1.0 at 0-250px, fade to 0.1 from 250-500px
-          const alpha = renormalized(centerDist, SYNC_RANGE * 0.5, SYNC_RANGE, 0.5, 0.1, true)
+        if (edgeDist <= SYNC_RANGE) {
+          // Calculate fade: 1.0 at 0-200px, fade to 0.1 from 200-400px
+          const alpha = renormalized(edgeDist, SYNC_RANGE * 0.5, SYNC_RANGE, 0.5, 0.1, true)
 
           // Draw line between centers with fade
           const serverCenter = { x: serverRect.left + serverRect.width / 2, y: serverRect.top + serverRect.height / 2 }
@@ -697,7 +710,7 @@ class SyncServer extends Typewriter {
     allSyncServers.forEach((server) => {
       if (server === this) return // Don't send to self
 
-      const dist = Math.hypot(this.left - server.left, this.top - server.top)
+      const dist = getEdgeDistance(this, server)
       if (dist <= SYNC_RANGE) {
         particleManager.addChangeParticle(this, server, changes)
       }

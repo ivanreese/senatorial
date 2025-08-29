@@ -296,7 +296,7 @@ class Typewriter {
     if (Automerge.equals(this.doc, other.doc)) {
       return // Already in sync
     }
-    
+
     // Send our changes to them (marked as catch-up sync)
     const ourChanges = this.getAllDocumentChanges()
     if (ourChanges.length > 0) {
@@ -668,6 +668,23 @@ class ParticleManager {
     })
   }
 
+  // Check if particle has valid connection path
+  checkParticleConnection(particle: Particle): boolean {
+    if (particle.source instanceof SyncServer && particle.target instanceof SyncServer) {
+      // SS → SS: check if sync servers are within range of each other
+      const dist = getEdgeDistance(particle.source, particle.target)
+      return dist <= SYNC_RANGE
+    } else if (particle.target instanceof SyncServer) {
+      // TW → SS: source must be connected to target sync server
+      return particle.source.connectedServers.has(particle.target)
+    } else if (particle.source instanceof SyncServer) {
+      // SS → TW: target must be connected to source sync server
+      return particle.target.connectedServers.has(particle.source)
+    }
+    // No TW → TW connections, so other cases are invalid
+    return false
+  }
+
   // Add particle carrying changes
   addChangeParticle(source: Typewriter, target: Typewriter, changes: Uint8Array[], isCatchUpSync = false, sourcePosition?: Position) {
     const newParticle = new Particle(changes, source, target, isCatchUpSync, sourcePosition)
@@ -696,10 +713,13 @@ class ParticleManager {
       // Update particle target based on current speculative state
       const targetInfo = particle.target.calculateChangeTargetPositionSpeculative(particle.changes)
 
+      // Check if there's a valid connection path for this particle
+      const hasValidConnection = this.checkParticleConnection(particle)
+
       // Physics constants
       const forceConstant = 200 // Constant force magnitude
       const mouseSpringConstant = 100
-      const damping = 0.88
+      const damping = 0.88 // Velocity damping (applied to velocity each frame)
       const dt = 1 / 60 // Time step
 
       let forceX = 0
@@ -715,15 +735,23 @@ class ParticleManager {
           forceY = (dy / distance) * mouseSpringConstant * distance
         }
       } else {
-        // Constant force toward target
-        const dx = targetInfo.position.x - particle.position.x
-        const dy = targetInfo.position.y - particle.position.y
-        const distance = Math.hypot(dx, dy)
+        // Only apply target force if no previous particle is further away
+        let shouldApplyTargetForce = true
+        if (particle.previousParticle && particle.previousParticle.lastKnownDistance > particle.lastKnownDistance) {
+          shouldApplyTargetForce = false
+        }
 
-        if (distance > 0.1) {
-          // Constant force in direction of target
-          forceX = (dx / distance) * forceConstant
-          forceY = (dy / distance) * forceConstant
+        if (shouldApplyTargetForce && hasValidConnection) {
+          // Constant force toward target
+          const dx = targetInfo.position.x - particle.position.x
+          const dy = targetInfo.position.y - particle.position.y
+          const distance = Math.hypot(dx, dy)
+
+          if (distance > 0) {
+            // Constant force in direction of target
+            forceX = (dx / distance) * forceConstant
+            forceY = (dy / distance) * forceConstant
+          }
         }
       }
 
@@ -735,7 +763,7 @@ class ParticleManager {
       particle.velocity.x += accelerationX * dt
       particle.velocity.y += accelerationY * dt
 
-      // Apply damping to velocity
+      // Apply velocity damping (simpler linear damping)
       particle.velocity.x *= damping
       particle.velocity.y *= damping
 
@@ -753,7 +781,7 @@ class ParticleManager {
       const [newSpeculativeDoc] = Automerge.applyChanges(particle.target.speculativeDoc, particle.changes)
       particle.target.speculativeDoc = newSpeculativeDoc
 
-      if (dist < 15 && !particle.isGrabbed) completedParticles.push(particle)
+      if (dist < 15 && !particle.isGrabbed && hasValidConnection) completedParticles.push(particle)
       else remainingParticles.push(particle)
     })
 

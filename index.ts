@@ -256,7 +256,7 @@ class Typewriter {
   }
 
   // Calculate where changes will be applied using speculative doc state
-  calculateChangeTargetPositionSpeculative(changes: Uint8Array[]): Position {
+  calculateChangeTargetPositionSpeculative(changes: Uint8Array[]): { position: Position, character: string, color: string } {
     // Apply changes to the current speculative state to get the after state
     const [afterDoc] = Automerge.applyChanges(Automerge.clone(this.speculativeDoc), changes)
 
@@ -280,6 +280,26 @@ class Typewriter {
       changeIndex = minLength
     }
 
+    // Determine character and color
+    const isAddition = afterChars.length > beforeChars.length
+    let character: string
+    let color: string
+
+    if (isAddition) {
+      character = afterChars[changeIndex] || ""
+      color = "green"
+    } else {
+      character = beforeChars[changeIndex] || ""
+      color = "red"
+    }
+
+    // Handle special characters
+    if (character === "\n") {
+      character = "\\n"
+    } else if (character === " ") {
+      character = ""  // Empty string for spaces - will draw as blank
+    }
+
     // Create a temporary typewriter with speculative doc for layout calculation
     const tempTypewriter = Object.create(this)
     tempTypewriter.doc = this.speculativeDoc
@@ -288,10 +308,10 @@ class Typewriter {
     const gridPos = tempTypewriter.drawAllText(false, changeIndex)
     if (!gridPos) {
       // Fallback to current position if drawAllText doesn't return position
-      return { x: this.left, y: this.top }
+      return { position: { x: this.left, y: this.top }, character, color }
     }
 
-    return this.gridToScreenCoords(gridPos.cx, gridPos.cy)
+    return { position: this.gridToScreenCoords(gridPos.cx, gridPos.cy), character, color }
   }
 
   render() {
@@ -416,16 +436,35 @@ class Typewriter {
 class Particle {
   position: Position
   lastKnownDistance = Infinity
+  character: string = ""
+  color: string = "#000"
 
   constructor(public changes: Uint8Array[], public source: Typewriter, public target: Typewriter) {
     this.position = source.gridToScreenCoords(source.insertionX / gw, source.insertionY / lh)
   }
 
   draw(ctx: CanvasRenderingContext2D) {
-    ctx.fillStyle = "#000"
-    ctx.beginPath()
-    ctx.arc(this.position.x, this.position.y, 8, 0, TAU)
-    ctx.fill()
+    if (this.character === "") {
+      // Draw blank circle for spaces
+      ctx.strokeStyle = this.color
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.arc(this.position.x, this.position.y, 8, 0, TAU)
+      ctx.stroke()
+    } else {
+      // Draw character with background circle
+      ctx.fillStyle = this.color
+      ctx.beginPath()
+      ctx.arc(this.position.x, this.position.y, 12, 0, TAU)
+      ctx.fill()
+      
+      // Draw character text
+      ctx.fillStyle = "white"
+      ctx.font = "14px monospace"
+      ctx.textAlign = "center"
+      ctx.textBaseline = "middle"
+      ctx.fillText(this.character, this.position.x, this.position.y)
+    }
   }
 }
 
@@ -459,16 +498,20 @@ class ParticleManager {
 
     this.particles.forEach((particle) => {
       // Update particle target based on current speculative state
-      const targetPos = particle.target.calculateChangeTargetPositionSpeculative(particle.changes)
+      const targetInfo = particle.target.calculateChangeTargetPositionSpeculative(particle.changes)
+
+      // Update particle character and color
+      particle.character = targetInfo.character
+      particle.color = targetInfo.color
 
       // Update particle movement toward the (potentially updated) target
-      let dx = targetPos.x - particle.position.x
-      let dy = targetPos.y - particle.position.y
+      let dx = targetInfo.position.x - particle.position.x
+      let dy = targetInfo.position.y - particle.position.y
       particle.position.x += dx / 50
       particle.position.y += dy / 50
 
-      dx = targetPos.x - particle.position.x
-      dy = targetPos.y - particle.position.y
+      dx = targetInfo.position.x - particle.position.x
+      dy = targetInfo.position.y - particle.position.y
       const dist = Math.hypot(dx, dy)
       particle.lastKnownDistance = dist
 

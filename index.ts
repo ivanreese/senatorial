@@ -8,8 +8,8 @@ type Position = { x: number; y: number }
 // AUTOMERGE SETUP ################################################################################
 
 // Create canonical root document that all typewriter docs will fork from
-const rootDoc = Automerge.change(Automerge.init<{ characters: string }>(), (doc) => {
-  doc.characters = ""
+const rootDoc = Automerge.change(Automerge.init<{ text: string }>(), (doc) => {
+  doc.text = ""
 })
 
 // PAGE LAYOUT ####################################################################################
@@ -98,7 +98,10 @@ class Typewriter {
     document.body.appendChild(this.elm)
 
     // Add drag functionality
-    this.elm.onmousedown = (e) => this.startDrag(e.clientX, e.clientY)
+    this.elm.onmousedown = (e) => {
+      e.preventDefault()
+      this.startDrag(e.clientX, e.clientY)
+    }
 
     // Register this typewriter
     allTypewriters.push(this)
@@ -144,7 +147,7 @@ class Typewriter {
   }
 
   moveRight() {
-    if (this.insertionPoint < this.doc.characters.length) {
+    if (this.insertionPoint < this.doc.text.length) {
       this.insertionPoint++
       this.render()
     }
@@ -153,7 +156,7 @@ class Typewriter {
   insertCharacter(char: string) {
     this.previousDocState = this.doc
     this.doc = Automerge.change(this.doc, (doc) => {
-      doc.characters = doc.characters.slice(0, this.insertionPoint) + char + doc.characters.slice(this.insertionPoint)
+      Automerge.splice(doc, ['text'], this.insertionPoint, 0, char)
     })
     this.insertionPoint++
 
@@ -165,7 +168,7 @@ class Typewriter {
     if (this.insertionPoint <= 0) return
     this.previousDocState = this.doc
     this.doc = Automerge.change(this.doc, (doc) => {
-      doc.characters = doc.characters.slice(0, this.insertionPoint - 1) + doc.characters.slice(this.insertionPoint)
+      Automerge.splice(doc, ['text'], this.insertionPoint - 1, 1)
     })
     this.insertionPoint--
 
@@ -222,8 +225,8 @@ class Typewriter {
     // Speculatively apply changes to a clone to get the after state
     const [afterDoc] = Automerge.applyChanges(Automerge.clone(this.doc), changes)
 
-    const beforeChars = this.doc.characters
-    const afterChars = afterDoc.characters
+    const beforeChars = this.doc.text
+    const afterChars = afterDoc.text
 
     // Find the first difference between before and after
     let changeIndex = 0
@@ -257,8 +260,8 @@ class Typewriter {
     // Apply changes to the current speculative state to get the after state
     const [afterDoc] = Automerge.applyChanges(Automerge.clone(this.speculativeDoc), changes)
 
-    const beforeChars = this.speculativeDoc.characters
-    const afterChars = afterDoc.characters
+    const beforeChars = this.speculativeDoc.text
+    const afterChars = afterDoc.text
 
     // Find the first difference between before and after
     let changeIndex = 0
@@ -332,7 +335,7 @@ class Typewriter {
     this.cx = margin // Reset the cursor position to the top left
     this.cy = padding
 
-    let characters = this.doc.characters
+    let characters = this.doc.text
     if (draw) this.insertionPoint = Math.min(this.insertionPoint, characters.length)
     let charIndex = 0
 
@@ -524,6 +527,7 @@ let allSyncServers: SyncServer[] = []
 
 // Spawn new typewriter by dragging from the top-left corner
 window.addEventListener("mousedown", (e) => {
+  e.preventDefault()
   if (e.clientX <= 50 && e.clientY <= 50) new Typewriter(e.clientX, e.clientY)
   if (e.clientX >= window.innerWidth - 50 && e.clientY <= 50) new SyncServer(e.clientX, e.clientY)
 })

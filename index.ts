@@ -1,9 +1,53 @@
 import * as Automerge from "@automerge/automerge"
 const TAU = Math.PI * 2
 
+// keep i between min and max
+const clip = (i: number, min = 0, max = 1) => Math.min(Math.max(i, min), max)
+
+// get what i would be if min became 0 and max became 1
+const normalized = (i: number, min: number, max: number, doClip = false) => {
+  let n = max === min ? min : (i - min) / (max - min)
+  return doClip ? clip(n) : n
+}
+
+// get what i would be if 0 became min and 1 became max
+const denormalized = (i: number, min: number, max: number) => i * (max - min) + min
+
+// normalize to [min1,max1] then denormalize to [min2,max2]
+const renormalized = (i: number, min1: number, max1: number, min2: number, max2: number, doClip = false) => {
+  if (max1 < min1) [min1, max1] = [max1, min1]
+  let n = normalized(i, min1, max1, doClip)
+  return denormalized(n, min2, max2)
+}
+
+// GLOBAL CANVAS FOR OVERLAYS ######################################################################
+
+const overlayCanvas = document.createElement("canvas")
+const overlayCtx = overlayCanvas.getContext("2d")!
+overlayCanvas.className = "overlay"
+overlayCanvas.width = window.innerWidth
+overlayCanvas.height = window.innerHeight
+overlayCanvas.style.position = "fixed"
+overlayCanvas.style.top = "0"
+overlayCanvas.style.left = "0"
+overlayCanvas.style.pointerEvents = "none"
+overlayCanvas.style.zIndex = "1000"
+document.body.appendChild(overlayCanvas)
+
 // TYPES ###########################################################################################
 
 type Position = { x: number; y: number }
+
+// GEOMETRY HELPERS ################################################################################
+
+// Calculate typewriter dimensions based on layout constants
+function getTypewriterDimensions(typewriter: Typewriter) {
+  // Calculate width and height based on text content and layout
+  typewriter.drawAllText(false) // Do layout pass to get dimensions
+  const width = lineWidth * gw * scale
+  const height = (typewriter.cy + 1 + padding) * lh * scale
+  return { width, height }
+}
 
 // AUTOMERGE SETUP ################################################################################
 
@@ -12,6 +56,10 @@ const rootDoc = Automerge.change(Automerge.init<{ text: string }>(), (doc) => {
   doc.text = ""
 })
 
+// SYNC CONFIGURATION ##############################################################################
+
+const SYNC_RANGE = 500 // Distance in pixels for server-to-server communication
+
 // PAGE LAYOUT ####################################################################################
 
 // Calculate the scale factor that'll get us to the output DPI we want
@@ -19,7 +67,7 @@ let charactersPerInch = 11 // this is based on the actual typewriter
 let linesPerInch = 8 // ROUGHLY — this is based on the glyph scan Todd sent me
 let atlasDPI = 1200 // ROUGHLY — this is based on the glyph scan Todd sent me
 let outputDPI = 300 // You can change this to whatever value you want, and everything Just Works™
-let scale = outputDPI / atlasDPI
+let scale = (0.5 * outputDPI) / atlasDPI
 
 // The width of the canvas
 let lineWidth = 32 // this works out to A5 paper width
@@ -156,7 +204,7 @@ class Typewriter {
   insertCharacter(char: string) {
     this.previousDocState = this.doc
     this.doc = Automerge.change(this.doc, (doc) => {
-      Automerge.splice(doc, ['text'], this.insertionPoint, 0, char)
+      Automerge.splice(doc, ["text"], this.insertionPoint, 0, char)
     })
     this.insertionPoint++
 
@@ -168,7 +216,7 @@ class Typewriter {
     if (this.insertionPoint <= 0) return
     this.previousDocState = this.doc
     this.doc = Automerge.change(this.doc, (doc) => {
-      Automerge.splice(doc, ['text'], this.insertionPoint - 1, 1)
+      Automerge.splice(doc, ["text"], this.insertionPoint - 1, 1)
     })
     this.insertionPoint--
 
@@ -181,17 +229,17 @@ class Typewriter {
     // Don't send if we ARE the sync server — that's handled elsewhere
     if (this instanceof SyncServer) return
 
-    // Send to the closest sync server
+    // Send to the closest sync server within range
     let syncServer: SyncServer | null = null
     let closeness = Infinity
     for (let ss of allSyncServers) {
       let dist = Math.hypot(this.left - ss.left, this.top - ss.top)
-      if (dist < closeness) {
+      if (dist <= SYNC_RANGE && dist < closeness) {
         syncServer = ss
         closeness = dist
       }
     }
-    if (!syncServer) return
+    if (!syncServer) return // No server within range
 
     const changes = this.getDocumentChanges()
     if (changes.length > 0) {
@@ -256,7 +304,7 @@ class Typewriter {
   }
 
   // Calculate where changes will be applied using speculative doc state
-  calculateChangeTargetPositionSpeculative(changes: Uint8Array[]): { position: Position, character: string, color: string } {
+  calculateChangeTargetPositionSpeculative(changes: Uint8Array[]): { position: Position; character: string; color: string } {
     // Apply changes to the current speculative state to get the after state
     const [afterDoc] = Automerge.applyChanges(Automerge.clone(this.speculativeDoc), changes)
 
@@ -297,7 +345,7 @@ class Typewriter {
     if (character === "\n") {
       character = "\\n"
     } else if (character === " ") {
-      character = ""  // Empty string for spaces - will draw as blank
+      character = "" // Empty string for spaces - will draw as blank
     }
 
     // Create a temporary typewriter with speculative doc for layout calculation
@@ -457,7 +505,7 @@ class Particle {
       ctx.beginPath()
       ctx.arc(this.position.x, this.position.y, 12, 0, TAU)
       ctx.fill()
-      
+
       // Draw character text
       ctx.fillStyle = "white"
       ctx.font = "14px monospace"
@@ -470,16 +518,6 @@ class Particle {
 
 class ParticleManager {
   particles: Particle[] = []
-
-  elm = document.createElement("canvas")
-  ctx = this.elm.getContext("2d")!
-
-  constructor() {
-    this.elm.className = "particles"
-    this.elm.width = window.innerWidth
-    this.elm.height = window.innerHeight
-    document.body.appendChild(this.elm)
-  }
 
   // Add particle carrying changes
   addChangeParticle(source: Typewriter, target: Typewriter, changes: Uint8Array[]) {
@@ -529,18 +567,93 @@ class ParticleManager {
     completedParticles.forEach((particle) => {
       particle.target.applyChanges(particle.changes)
 
-      // TODO: Can we only only rebroadcast to peers that don't already have this change?
-      // Otherwise, 3 sync servers would generate an infinite loop A->B->C->A->B…
+      // Rebroadcast logic for sync servers
       if (particle.target instanceof SyncServer) {
+        // Send to nearby sync servers
+        allSyncServers
+          .filter((server) => server !== particle.target && server !== particle.source)
+          .forEach((server) => {
+            const dist = Math.hypot(particle.target.left - server.left, particle.target.top - server.top)
+            if (dist <= SYNC_RANGE) {
+              particleManager.addChangeParticle(particle.target, server, particle.changes)
+            }
+          })
+
+        // Send to regular typewriters (clients of this server)
         allTypewriters
-          .filter((tw) => tw !== particle.target && tw !== particle.source)
-          .forEach((typewriter) => particleManager.addChangeParticle(particle.target, typewriter, particle.changes))
+          .filter((tw) => !(tw instanceof SyncServer) && tw !== particle.source)
+          .forEach((typewriter) => {
+            // Send to typewriters that consider this server their closest server within range
+            let closestServer: SyncServer | null = null
+            let closeness = Infinity
+            for (let ss of allSyncServers) {
+              let dist = Math.hypot(typewriter.left - ss.left, typewriter.top - ss.top)
+              if (dist <= SYNC_RANGE && dist < closeness) {
+                closestServer = ss
+                closeness = dist
+              }
+            }
+            if (closestServer === particle.target) {
+              particleManager.addChangeParticle(particle.target, typewriter, particle.changes)
+            }
+          })
       }
     })
 
+    // Clear and render overlay content
+    overlayCtx.clearRect(0, 0, window.innerWidth, window.innerHeight)
+
+    // Render sync server connections
+    allSyncServers.forEach((server) => {
+      overlayCtx.lineWidth = 3
+
+      // Get server rectangle
+      const serverDims = getTypewriterDimensions(server)
+      const serverRect = {
+        left: server.left,
+        top: server.top,
+        width: serverDims.width,
+        height: serverDims.height,
+      }
+
+      // Draw lines to all typewriters in range
+      allTypewriters.forEach((typewriter) => {
+        if (typewriter === server) return // Don't draw line to self
+
+        // Get typewriter rectangle
+        const typewriterDims = getTypewriterDimensions(typewriter)
+        const typewriterRect = {
+          left: typewriter.left,
+          top: typewriter.top,
+          width: typewriterDims.width,
+          height: typewriterDims.height,
+        }
+
+        // Check distance between rectangle centers
+        const centerDist = Math.hypot(
+          serverRect.left + serverRect.width / 2 - (typewriterRect.left + typewriterRect.width / 2),
+          serverRect.top + serverRect.height / 2 - (typewriterRect.top + typewriterRect.height / 2)
+        )
+
+        if (centerDist <= SYNC_RANGE) {
+          // Calculate fade: 1.0 at 0-250px, fade to 0.1 from 250-500px
+          const alpha = renormalized(centerDist, SYNC_RANGE * 0.5, SYNC_RANGE, 1.0, 0.1, true)
+
+          // Draw line between centers with fade
+          const serverCenter = { x: serverRect.left + serverRect.width / 2, y: serverRect.top + serverRect.height / 2 }
+          const typewriterCenter = { x: typewriterRect.left + typewriterRect.width / 2, y: typewriterRect.top + typewriterRect.height / 2 }
+
+          overlayCtx.strokeStyle = `rgba(255, 255, 255, ${alpha})`
+          overlayCtx.beginPath()
+          overlayCtx.moveTo(serverCenter.x, serverCenter.y)
+          overlayCtx.lineTo(typewriterCenter.x, typewriterCenter.y)
+          overlayCtx.stroke()
+        }
+      })
+    })
+
     // Render particles
-    this.ctx.clearRect(0, 0, window.innerWidth, window.innerHeight)
-    this.particles.forEach((particle) => particle.draw(this.ctx))
+    this.particles.forEach((particle) => particle.draw(overlayCtx))
   }
 }
 
@@ -559,6 +672,34 @@ class SyncServer extends Typewriter {
     super(x, y)
     allSyncServers.push(this)
     this.elm.classList.add("server")
+  }
+
+  // Override render (sync range circle now drawn by particle manager)
+  render() {
+    super.render()
+  }
+
+  // Send changes to other sync servers within range
+  sendChangeToOtherServers() {
+    const changes = this.getDocumentChanges()
+    if (changes.length === 0) return
+
+    // Send to nearby sync servers within range
+    allSyncServers.forEach((server) => {
+      if (server === this) return // Don't send to self
+
+      const dist = Math.hypot(this.left - server.left, this.top - server.top)
+      if (dist <= SYNC_RANGE) {
+        particleManager.addChangeParticle(this, server, changes)
+      }
+    })
+
+    this.previousDocState = this.doc // Reset tracking after sending
+  }
+
+  // Override to send to servers instead of looking for closest server
+  sendChangeToSyncServer() {
+    this.sendChangeToOtherServers()
   }
 }
 

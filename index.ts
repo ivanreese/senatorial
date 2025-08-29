@@ -1,6 +1,12 @@
 import * as Automerge from "@automerge/automerge"
 const TAU = Math.PI * 2
 
+// SYNC CONFIGURATION #############################################################################
+
+const SYNC_RANGE = 300 // Distance in pixels for server-to-server communication
+
+// MATH ###########################################################################################
+
 // keep i between min and max
 const clip = (i: number, min = 0, max = 1) => Math.min(Math.max(i, min), max)
 
@@ -61,12 +67,12 @@ function getTypewriterDimensions(typewriter: Typewriter) {
 function getEdgeDistance(tw1: Typewriter, tw2: Typewriter): number {
   const dims1 = getTypewriterDimensions(tw1)
   const dims2 = getTypewriterDimensions(tw2)
-  
+
   const centerToCenter = {
     x: tw1.left + dims1.width / 2 - (tw2.left + dims2.width / 2),
-    y: tw1.top + dims1.height / 2 - (tw2.top + dims2.height / 2)
+    y: tw1.top + dims1.height / 2 - (tw2.top + dims2.height / 2),
   }
-  
+
   return Math.hypot(
     Math.max(0, Math.abs(centerToCenter.x) - dims1.width / 2 - dims2.width / 2),
     Math.max(0, Math.abs(centerToCenter.y) - dims1.height / 2 - dims2.height / 2)
@@ -79,10 +85,6 @@ function getEdgeDistance(tw1: Typewriter, tw2: Typewriter): number {
 const rootDoc = Automerge.change(Automerge.init<{ text: string }>(), (doc) => {
   doc.text = ""
 })
-
-// SYNC CONFIGURATION ##############################################################################
-
-const SYNC_RANGE = 200 // Distance in pixels for server-to-server communication
 
 // PAGE LAYOUT ####################################################################################
 
@@ -530,13 +532,17 @@ class Typewriter {
 
 class Particle {
   position: Position
+  previousPosition: Position
+  velocity: Position = { x: 0, y: 0 }
   lastKnownDistance = Infinity
   character: string = ""
   color: string = "#000"
   isCatchUpSync: boolean = false
+  isGrabbed: boolean = false
 
   constructor(public changes: Uint8Array[], public source: Typewriter, public target: Typewriter, isCatchUpSync = false) {
     this.position = source.gridToScreenCoords(source.insertionX / gw, source.insertionY / lh)
+    this.previousPosition = { ...this.position }
     this.isCatchUpSync = isCatchUpSync
   }
 
@@ -545,27 +551,26 @@ class Particle {
       // Special rendering for catch-up sync particles
       const radius = 20
       const time = Date.now() / 200
-      
+
       // Pulsing outer ring
       ctx.strokeStyle = "#4a90e2"
       ctx.lineWidth = 3
       ctx.beginPath()
       ctx.arc(this.position.x, this.position.y, radius + Math.sin(time) * 3, 0, TAU)
       ctx.stroke()
-      
+
       // Inner filled circle
       ctx.fillStyle = "#4a90e2"
       ctx.beginPath()
       ctx.arc(this.position.x, this.position.y, radius * 0.7, 0, TAU)
       ctx.fill()
-      
+
       // "SYNC" text
       ctx.fillStyle = "white"
       ctx.font = "bold 10px sans-serif"
       ctx.textAlign = "center"
       ctx.textBaseline = "middle"
       ctx.fillText("SYNC", this.position.x, this.position.y)
-      
     } else if (this.character === "") {
       // Draw blank circle for spaces
       ctx.strokeStyle = this.color
@@ -592,6 +597,49 @@ class Particle {
 
 class ParticleManager {
   particles: Particle[] = []
+  mousePosition: Position = { x: 0, y: 0 }
+  grabbedParticle: Particle | null = null
+
+  constructor() {
+    // Track mouse position
+    window.addEventListener("mousemove", (e) => {
+      this.mousePosition.x = e.clientX
+      this.mousePosition.y = e.clientY
+    })
+
+    // Handle mouse clicks for grabbing particles
+    window.addEventListener("mousedown", (e) => {
+      // Find closest particle to mouse
+      let closestParticle: Particle | null = null
+      let closestDistance = Infinity
+      const grabRadius = 30
+
+      this.particles.forEach((particle) => {
+        const dx = particle.position.x - e.clientX
+        const dy = particle.position.y - e.clientY
+        const distance = Math.hypot(dx, dy)
+
+        if (distance < grabRadius && distance < closestDistance) {
+          closestParticle = particle
+          closestDistance = distance
+        }
+      })
+
+      if (closestParticle) {
+        this.grabbedParticle = closestParticle
+        closestParticle.isGrabbed = true
+        e.preventDefault()
+      }
+    })
+
+    // Handle mouse release
+    window.addEventListener("mouseup", () => {
+      if (this.grabbedParticle) {
+        this.grabbedParticle.isGrabbed = false
+        this.grabbedParticle = null
+      }
+    })
+  }
 
   // Add particle carrying changes
   addChangeParticle(source: Typewriter, target: Typewriter, changes: Uint8Array[], isCatchUpSync = false) {
@@ -616,14 +664,52 @@ class ParticleManager {
       particle.character = targetInfo.character
       particle.color = targetInfo.color
 
-      // Update particle movement toward the (potentially updated) target
-      let dx = targetInfo.position.x - particle.position.x
-      let dy = targetInfo.position.y - particle.position.y
-      particle.position.x += dx / 50
-      particle.position.y += dy / 50
+      // Physics constants
+      const friction = 0.98
+      const targetForce = 3
+      const mouseForce = 8
 
-      dx = targetInfo.position.x - particle.position.x
-      dy = targetInfo.position.y - particle.position.y
+      // Store current position for Verlet integration
+      const currentX = particle.position.x
+      const currentY = particle.position.y
+
+      let forceX = 0
+      let forceY = 0
+
+      if (particle.isGrabbed) {
+        // Strong force toward mouse
+        const dx = this.mousePosition.x - particle.position.x
+        const dy = this.mousePosition.y - particle.position.y
+        forceX = dx * mouseForce
+        forceY = dy * mouseForce
+      } else {
+        // Constant force toward target (normalized direction)
+        const dx = targetInfo.position.x - particle.position.x
+        const dy = targetInfo.position.y - particle.position.y
+        const distance = Math.hypot(dx, dy)
+
+        if (distance > 0.1) {
+          // Avoid division by zero
+          forceX = (dx / distance) * targetForce
+          forceY = (dy / distance) * targetForce
+        }
+      }
+
+      // Verlet integration
+      particle.position.x = currentX + (currentX - particle.previousPosition.x) * friction + forceX * 0.01
+      particle.position.y = currentY + (currentY - particle.previousPosition.y) * friction + forceY * 0.01
+
+      // Update velocity for momentum calculation
+      particle.velocity.x = particle.position.x - currentX
+      particle.velocity.y = particle.position.y - currentY
+
+      // Update previous position
+      particle.previousPosition.x = currentX
+      particle.previousPosition.y = currentY
+
+      // Calculate distance for completion check
+      const dx = targetInfo.position.x - particle.position.x
+      const dy = targetInfo.position.y - particle.position.y
       const dist = Math.hypot(dx, dy)
       particle.lastKnownDistance = dist
 
@@ -631,7 +717,7 @@ class ParticleManager {
       const [newSpeculativeDoc] = Automerge.applyChanges(particle.target.speculativeDoc, particle.changes)
       particle.target.speculativeDoc = newSpeculativeDoc
 
-      if (dist < 10) completedParticles.push(particle)
+      if (dist < 15 && !particle.isGrabbed) completedParticles.push(particle)
       else remainingParticles.push(particle)
     })
 
@@ -700,7 +786,7 @@ class ParticleManager {
 
         // Track connection state changes
         const wasConnected = typewriter.connectedServers.has(server)
-        
+
         if (inRange && !wasConnected) {
           // New connection established - sync
           typewriter.connectedServers.add(server)

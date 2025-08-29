@@ -303,11 +303,17 @@ class Typewriter {
   }
 
   // Apply changes from another document (from particles)
-  applyChanges(changes: Uint8Array[]) {
+  // Returns the target position where the changes were applied
+  applyChanges(changes: Uint8Array[]): Position {
+    // Calculate where changes will be applied before applying them
+    const targetPosition = this.calculateChangeTargetPosition(changes)
+    
     this.previousDocState = this.doc
     const [newDoc] = Automerge.applyChanges(this.doc, changes)
     this.doc = newDoc
     this.render()
+    
+    return targetPosition
   }
 
   // Convert grid position to screen coordinates
@@ -540,8 +546,13 @@ class Particle {
   isCatchUpSync: boolean = false
   isGrabbed: boolean = false
 
-  constructor(public changes: Uint8Array[], public source: Typewriter, public target: Typewriter, isCatchUpSync = false) {
-    this.position = source.gridToScreenCoords(source.insertionX / gw, source.insertionY / lh)
+  constructor(public changes: Uint8Array[], public source: Typewriter, public target: Typewriter, isCatchUpSync = false, sourcePosition?: Position) {
+    // Use provided source position or fall back to source's insertion point
+    if (sourcePosition) {
+      this.position = { ...sourcePosition }
+    } else {
+      this.position = source.gridToScreenCoords(source.insertionX / gw, source.insertionY / lh)
+    }
     this.previousPosition = { ...this.position }
     this.isCatchUpSync = isCatchUpSync
 
@@ -649,8 +660,8 @@ class ParticleManager {
   }
 
   // Add particle carrying changes
-  addChangeParticle(source: Typewriter, target: Typewriter, changes: Uint8Array[], isCatchUpSync = false) {
-    this.particles.push(new Particle(changes, source, target, isCatchUpSync))
+  addChangeParticle(source: Typewriter, target: Typewriter, changes: Uint8Array[], isCatchUpSync = false, sourcePosition?: Position) {
+    this.particles.push(new Particle(changes, source, target, isCatchUpSync, sourcePosition))
   }
 
   update() {
@@ -728,7 +739,7 @@ class ParticleManager {
 
     // Process completed particles AFTER filtering is done
     completedParticles.forEach((particle) => {
-      particle.target.applyChanges(particle.changes)
+      const targetPosition = particle.target.applyChanges(particle.changes)
 
       // Rebroadcast logic for sync servers
       if (particle.target instanceof SyncServer) {
@@ -738,7 +749,7 @@ class ParticleManager {
           .forEach((server) => {
             const dist = getEdgeDistance(particle.target, server)
             if (dist <= SYNC_RANGE) {
-              particleManager.addChangeParticle(particle.target, server, particle.changes)
+              particleManager.addChangeParticle(particle.target, server, particle.changes, false, targetPosition)
             }
           })
 
@@ -757,7 +768,7 @@ class ParticleManager {
               }
             }
             if (closestServer === particle.target) {
-              particleManager.addChangeParticle(particle.target, typewriter, particle.changes)
+              particleManager.addChangeParticle(particle.target, typewriter, particle.changes, false, targetPosition)
             }
           })
       }

@@ -544,7 +544,7 @@ class Particle {
     this.position = source.gridToScreenCoords(source.insertionX / gw, source.insertionY / lh)
     this.previousPosition = { ...this.position }
     this.isCatchUpSync = isCatchUpSync
-    
+
     // Determine and cache character and color once at creation
     if (!isCatchUpSync) {
       const targetInfo = target.calculateChangeTargetPositionSpeculative(changes)
@@ -668,9 +668,9 @@ class ParticleManager {
       const targetInfo = particle.target.calculateChangeTargetPositionSpeculative(particle.changes)
 
       // Physics constants
-      const friction = 0.98
-      const targetForce = 3
-      const mouseForce = 8
+      const friction = 0.99
+      const targetForce = 2
+      const mouseForce = 3
 
       // Store current position for Verlet integration
       const currentX = particle.position.x

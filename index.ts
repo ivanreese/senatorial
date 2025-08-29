@@ -103,6 +103,9 @@ class TypewriterInstance {
       this.startDrag(e)
     }
 
+    // Register this typewriter
+    allTypewriters.push(this)
+
     console.log("TypewriterInstance created with doc:", this.doc)
     console.log("Doc has characters field:", "characters" in this.doc)
   }
@@ -112,6 +115,23 @@ class TypewriterInstance {
     const changes = Automerge.getChanges(this.previousDocState, this.doc)
     console.log("Document changes since last state:", changes)
     return changes
+  }
+
+  // Extract all accumulated changes and reset tracking
+  extractChanges() {
+    const changes = this.getDocumentChanges()
+    this.previousDocState = this.doc // Reset tracking point
+    return changes
+  }
+
+  // Apply changes from another document
+  applyChanges(changes: Uint8Array[]) {
+    console.log("Applying changes:", changes.length, "changes")
+    this.previousDocState = this.doc
+    const [newDoc] = Automerge.applyChanges(this.doc, changes)
+    this.doc = newDoc
+    console.log("Doc after applying changes:", this.doc.characters)
+    this.render()
   }
 
   focus() {
@@ -321,12 +341,54 @@ class SyncServer extends TypewriterInstance {
     
     console.log("SyncServer created at", x, y)
   }
+
+  // Override applyChanges to add broadcasting
+  applyChanges(changes: Uint8Array[]) {
+    console.log("SyncServer: Applying changes and broadcasting...")
+    
+    // Apply changes to self
+    super.applyChanges(changes)
+    
+    // Broadcast to all other typewriters (not the sync server itself)
+    this.broadcastChanges(changes)
+  }
+
+  broadcastChanges(changes: Uint8Array[]) {
+    console.log("SyncServer: Broadcasting to", allTypewriters.length, "typewriters")
+    
+    allTypewriters.forEach(typewriter => {
+      if (typewriter !== this) { // Don't broadcast to self
+        console.log("Broadcasting to typewriter...")
+        typewriter.applyChanges(changes)
+      }
+    })
+    
+    console.log("SyncServer: Broadcast complete")
+  }
 }
 
 // INSTANCE MANAGEMENT ##############################################################################
 
 let focusedInstance: TypewriterInstance | null = null
 let syncServer: SyncServer | null = null
+let lastExtractedChanges: Uint8Array[] = [] // Store changes for testing
+let allTypewriters: TypewriterInstance[] = [] // Track all typewriter instances
+
+// Helper function to copy changes from one typewriter to another
+function copyChanges(source: TypewriterInstance, target: TypewriterInstance) {
+  console.log("=== COPYING CHANGES ===")
+  console.log("From:", source === syncServer ? "SyncServer" : "Typewriter")
+  console.log("To:", target === syncServer ? "SyncServer" : "Typewriter")
+  
+  const changes = source.extractChanges()
+  if (changes.length > 0) {
+    target.applyChanges(changes)
+    console.log("Successfully copied", changes.length, "changes")
+  } else {
+    console.log("No changes to copy")
+  }
+  console.log("=== END COPY ===")
+}
 
 // Spawn new typewriter by clicking in top-left corner
 window.addEventListener("mousedown", (e) => {
@@ -339,6 +401,60 @@ window.addEventListener("mousedown", (e) => {
 
 window.addEventListener("keydown", (e) => {
   if (!focusedInstance) return
+  
+  // Manual change extraction - press Ctrl+E
+  if (e.key === "e" && e.ctrlKey) {
+    console.log("=== MANUAL CHANGE EXTRACTION ===")
+    const changes = focusedInstance.extractChanges()
+    lastExtractedChanges = changes // Store for manual application
+    console.log("Extracted changes:", changes)
+    console.log("Changes count:", changes.length)
+    if (changes.length > 0) {
+      console.log("First change details:", changes[0])
+      console.log("Change structure keys:", Object.keys(changes[0]))
+    }
+    console.log("Stored changes for manual application (use Ctrl+A)")
+    console.log("=== END EXTRACTION ===")
+    e.preventDefault()
+    return
+  }
+
+  // Manual change application - press Ctrl+A
+  if (e.key === "a" && e.ctrlKey) {
+    console.log("=== MANUAL CHANGE APPLICATION ===")
+    if (lastExtractedChanges.length > 0) {
+      console.log("Applying", lastExtractedChanges.length, "stored changes to focused instance")
+      focusedInstance.applyChanges(lastExtractedChanges)
+    } else {
+      console.log("No stored changes to apply - extract some first with Ctrl+E")
+    }
+    console.log("=== END APPLICATION ===")
+    e.preventDefault()
+    return
+  }
+
+  // Copy changes TO sync server - press Ctrl+S
+  if (e.key === "s" && e.ctrlKey) {
+    if (syncServer && focusedInstance !== syncServer) {
+      copyChanges(focusedInstance, syncServer)
+    } else {
+      console.log("Focus a typewriter (not sync server) to copy changes TO sync server")
+    }
+    e.preventDefault()
+    return
+  }
+
+  // Copy changes FROM sync server - press Ctrl+R  
+  if (e.key === "r" && e.ctrlKey) {
+    if (syncServer && focusedInstance !== syncServer) {
+      copyChanges(syncServer, focusedInstance)
+    } else {
+      console.log("Focus a typewriter (not sync server) to copy changes FROM sync server")
+    }
+    e.preventDefault()
+    return
+  }
+  
   if (e.key.length === 1) return focusedInstance.insertCharacter(e.key)
   if (e.key === "Backspace") return focusedInstance.deleteCharacter()
   if (e.key === "Enter") return focusedInstance.insertNewline()

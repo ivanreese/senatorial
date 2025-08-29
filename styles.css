@@ -10,13 +10,19 @@ body {
   overflow: auto;
 }
 
-body::before {
+body::before,
+body::after {
   content: "";
   position: absolute;
   width: 50px;
   height: 50px;
   background: #fff8;
   border-radius: 0 0 1em;
+}
+
+body::after {
+  right: 0;
+  border-radius: 0 0 0 1em;
 }
 
 canvas.text {
@@ -30,6 +36,21 @@ canvas.text {
   box-shadow: 0 1px 4px #0001;
   image-rendering: pixelated;
   animation: fadeIn 0.5s ease-in-out;
+}
+
+canvas.server {
+  background-color: hsl(200, 70%, 95%);
+  border: 2px solid hsl(200, 70%, 70%);
+}
+
+canvas.particles {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 1000;
 }
 
 @keyframes fadeIn {

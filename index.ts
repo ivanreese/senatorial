@@ -1,11 +1,13 @@
 import * as Automerge from "@automerge/automerge"
 
-// AUTOMERGE SETUP #################################################################################
+// AUTOMERGE SETUP ################################################################################
 
 // Create canonical root document that all typewriter docs will fork from
 const rootDoc = Automerge.change(Automerge.init<{ characters: string }>(), (doc) => {
   doc.characters = ""
 })
+
+// PAGE LAYOUT ####################################################################################
 
 // Calculate the scale factor that'll get us to the output DPI we want
 let charactersPerInch = 11 // this is based on the actual typewriter
@@ -65,17 +67,10 @@ let getGlyphPosInAtlas = (c: string): [number, number] | [null, null] => {
 // This image stores the currently-loaded glyph atlas
 let atlasImg = new Image()
 atlasImg.src = `glyphs/regular.png`
-atlasImg.onload = () => {
-  // Create sync server at center-top of screen
-  syncServer = new SyncServer(window.innerWidth / 2 - 200, 100)
-  syncServer.render()
 
-  // No initial regular typewriter - user creates them by clicking in top-left corner
-}
+// TYPEWRITER #####################################################################################
 
-// TYPEWRITER INSTANCE CLASS #######################################################################
-
-class TypewriterInstance {
+class Typewriter {
   elm = document.createElement("canvas")
   ctx = this.elm.getContext("2d")!
   doc = Automerge.clone(rootDoc)
@@ -86,84 +81,36 @@ class TypewriterInstance {
   cx = margin
   cy = padding
 
-  // Insertion point screen position
+  // Insertion point position
   insertionX = margin * gw
   insertionY = padding * lh
 
-  constructor(x = 0, y = 0) {
+  constructor(public left: number, public top: number) {
     this.elm.className = "text"
-    this.elm.style.left = `${x}px`
-    this.elm.style.top = `${y}px`
+    this.elm.style.left = `${left}px`
+    this.elm.style.top = `${top}px`
     document.body.appendChild(this.elm)
 
     // Add drag functionality
-    this.elm.onmousedown = (e) => {
-      this.startDrag(e)
-    }
+    this.elm.onmousedown = (e) => this.startDrag(e.clientX, e.clientY)
 
     // Register this typewriter
     allTypewriters.push(this)
-  }
 
-  // Helper method to get changes since last tracked state
-  getDocumentChanges() {
-    const changes = Automerge.getChanges(this.previousDocState, this.doc)
-    return changes
-  }
-
-  // Extract all accumulated changes and reset tracking
-  extractChanges() {
-    const changes = this.getDocumentChanges()
-    this.previousDocState = this.doc // Reset tracking point
-    return changes
-  }
-
-  // Apply changes from another document (from particles)
-  applyChanges(changes: Uint8Array[]) {
-    this.previousDocState = this.doc
-    const [newDoc] = Automerge.applyChanges(this.doc, changes)
-    this.doc = newDoc
-    this.render()
-
-    // Don't send changes back to sync server when applying from particles
-    // (this would create infinite loops)
-  }
-
-  // Send change to sync server via particle
-  sendChangeToSyncServer() {
-    // Don't send if we ARE the sync server, or if sync server doesn't exist
-    if (this instanceof SyncServer || !syncServer) return
-
-    const changes = this.getDocumentChanges()
-    if (changes.length > 0) {
-      particleManager.addChangeParticle(this, syncServer, changes)
-      // Reset tracking after sending
-      this.previousDocState = this.doc
-    }
-  }
-
-  focus() {
-    let previousFocus = focusedInstance
-    focusedInstance = this
-    if (previousFocus && previousFocus !== this) {
-      previousFocus.render()
-    }
-    this.render()
-  }
-
-  startDrag(e: MouseEvent) {
-    let dragStartX = e.clientX
-    let dragStartY = e.clientY
-    let elementStartX = parseInt(this.elm.style.left)
-    let elementStartY = parseInt(this.elm.style.top)
     this.focus()
-    e.preventDefault()
+    this.startDrag(left, top)
+  }
+
+  startDrag(initialX: number, initialY: number) {
+    let offsetX = this.left - initialX
+    let offsetY = this.top - initialY
+    this.focus()
 
     const onMouseMove = (e: MouseEvent) => {
-      let newX = elementStartX + (e.clientX - dragStartX)
-      let newY = elementStartY + (e.clientY - dragStartY)
-      this.elm.style.left = `${newX}px`
-      this.elm.style.top = `${newY}px`
+      this.left = offsetX + e.clientX
+      this.top = offsetY + e.clientY
+      this.elm.style.left = `${this.left}px`
+      this.elm.style.top = `${this.top}px`
     }
 
     const onMouseUp = () => {
@@ -175,51 +122,16 @@ class TypewriterInstance {
     window.addEventListener("mouseup", onMouseUp)
   }
 
-  insertCharacter(char: string) {
-    this.previousDocState = this.doc
-    this.doc = Automerge.change(this.doc, (doc) => {
-      doc.characters = doc.characters.slice(0, this.insertionPoint) + char + doc.characters.slice(this.insertionPoint)
-    })
-    this.insertionPoint++
-
-    // Send change to sync server via particle (if this isn't the sync server)
-    this.sendChangeToSyncServer()
-
-    this.render()
-  }
-
-  deleteCharacter() {
-    if (this.insertionPoint > 0) {
-      this.previousDocState = this.doc
-      this.doc = Automerge.change(this.doc, (doc) => {
-        doc.characters = doc.characters.slice(0, this.insertionPoint - 1) + doc.characters.slice(this.insertionPoint)
-      })
-      this.insertionPoint--
-
-      // Send change to sync server via particle
-      this.sendChangeToSyncServer()
-
-      this.render()
-    }
-  }
-
-  insertNewline() {
-    this.previousDocState = this.doc
-    this.doc = Automerge.change(this.doc, (doc) => {
-      doc.characters = doc.characters.slice(0, this.insertionPoint) + "\n" + doc.characters.slice(this.insertionPoint)
-    })
-    this.insertionPoint++
-
-    // Send change to sync server via particle
-    this.sendChangeToSyncServer()
-
+  focus() {
+    let previousFocus = focusedInstance
+    focusedInstance = this
+    if (previousFocus && previousFocus !== this) previousFocus.render()
     this.render()
   }
 
   moveLeft() {
     if (this.insertionPoint > 0) {
       this.insertionPoint--
-
       this.render()
     }
   }
@@ -227,9 +139,68 @@ class TypewriterInstance {
   moveRight() {
     if (this.insertionPoint < this.doc.characters.length) {
       this.insertionPoint++
-
       this.render()
     }
+  }
+
+  insertCharacter(char: string) {
+    this.previousDocState = this.doc
+    this.doc = Automerge.change(this.doc, (doc) => {
+      doc.characters = doc.characters.slice(0, this.insertionPoint) + char + doc.characters.slice(this.insertionPoint)
+    })
+    this.insertionPoint++
+
+    this.sendChangeToSyncServer()
+    this.render()
+  }
+
+  deleteCharacter() {
+    if (this.insertionPoint <= 0) return
+    this.previousDocState = this.doc
+    this.doc = Automerge.change(this.doc, (doc) => {
+      doc.characters = doc.characters.slice(0, this.insertionPoint - 1) + doc.characters.slice(this.insertionPoint)
+    })
+    this.insertionPoint--
+
+    this.sendChangeToSyncServer()
+    this.render()
+  }
+
+  // Send change to sync server via particle
+  sendChangeToSyncServer() {
+    // Don't send if we ARE the sync server — that's handled elsewhere
+    if (this instanceof SyncServer) return
+
+    // Send to the closest sync server
+    let syncServer: SyncServer | null = null
+    let closeness = Infinity
+    for (let ss of allSyncServers) {
+      let dist = Math.hypot(this.left - ss.left, this.top - ss.top)
+      if (dist < closeness) {
+        syncServer = ss
+        closeness = dist
+      }
+    }
+    if (!syncServer) return
+
+    const changes = this.getDocumentChanges()
+    if (changes.length > 0) {
+      particleManager.addChangeParticle(this, syncServer, changes)
+      this.previousDocState = this.doc // Reset tracking after sending
+    }
+  }
+
+  // Helper method to get changes since last tracked state
+  getDocumentChanges() {
+    return Automerge.getChanges(this.previousDocState, this.doc)
+  }
+
+  // Apply changes from another document (from particles)
+  applyChanges(changes: Uint8Array[]) {
+    this.previousDocState = this.doc
+    const [newDoc] = Automerge.applyChanges(this.doc, changes)
+    this.doc = newDoc
+    this.render()
   }
 
   render() {
@@ -344,64 +315,31 @@ class TypewriterInstance {
 // PARTICLE SYSTEM ##################################################################################
 
 class Particle {
-  x: number
-  y: number
-  targetX: number
-  targetY: number
-  startX: number
-  startY: number
+  angle = 0
+  speed = 0
   progress = 0
-  speed = 0.02 // Animation speed (0-1 per frame)
   size = 8
   color = "hsl(300, 80%, 60%)"
 
-  // Change data this particle is carrying
-  changes: Uint8Array[]
-  source: TypewriterInstance
-  target: TypewriterInstance
-
   constructor(
-    startX: number,
-    startY: number,
-    targetX: number,
-    targetY: number,
-    changes: Uint8Array[],
-    source: TypewriterInstance,
-    target: TypewriterInstance
-  ) {
-    this.startX = startX
-    this.startY = startY
-    this.x = startX
-    this.y = startY
-    this.targetX = targetX
-    this.targetY = targetY
-    this.changes = changes
-    this.source = source
-    this.target = target
-  }
+    public changes: Uint8Array[],
+    public source: Typewriter,
+    public target: Typewriter,
+    public x = 0,
+    public y = 0,
+    public targetX = 0,
+    public targetY = 0
+  ) {}
 
   update() {
-    if (this.progress < 1) {
-      this.progress += this.speed
-
-      // Debug logging for broadcast particles
-      if (this.source instanceof SyncServer) {
-      }
-
-      // Smooth easing animation
-      const eased = 1 - Math.pow(1 - this.progress, 3) // Ease out cubic
-
-      this.x = this.startX + (this.targetX - this.startX) * eased
-      this.y = this.startY + (this.targetY - this.startY) * eased
-
-      return false // Still animating
-    }
-
-    // Debug when complete
-    if (this.source instanceof SyncServer) {
-    }
-
-    return true // Animation complete
+    let dx = this.targetX - this.x
+    let dy = this.targetY - this.y
+    let angle = Math.atan2(dy, dx)
+    let dist = Math.hypot(dx, dy)
+    this.speed += Math.min(dist, 0.01)
+    this.x += Math.cos(angle) * this.speed
+    this.y += Math.sin(angle) * this.speed
+    return dist < 1
   }
 
   draw(ctx: CanvasRenderingContext2D) {
@@ -414,55 +352,24 @@ class Particle {
 
 class ParticleManager {
   particles: Particle[] = []
-  animationId: number | null = null
+
+  elm = document.createElement("canvas")
+  ctx = this.elm.getContext("2d")!
+
+  constructor() {
+    this.elm.className = "particles"
+    this.elm.width = window.innerWidth
+    this.elm.height = window.innerHeight
+    document.body.appendChild(this.elm)
+  }
 
   // Add particle carrying changes
-  addChangeParticle(source: TypewriterInstance, target: TypewriterInstance, changes: Uint8Array[]) {
-    // Get positions of source and target
-    const sourceRect = source.elm.getBoundingClientRect()
-    const targetRect = target.elm.getBoundingClientRect()
-
-    const startX = sourceRect.left + sourceRect.width / 2
-    const startY = sourceRect.top + sourceRect.height / 2
-    const targetX = targetRect.left + targetRect.width / 2
-    const targetY = targetRect.top + targetRect.height / 2
-
-    const particle = new Particle(startX, startY, targetX, targetY, changes, source, target)
-    this.particles.push(particle)
-
-    // Start animation loop if not running
-    if (!this.animationId) {
-      this.startAnimation()
-    }
-
-    return particle
-  }
-
-  // Legacy method for test particles (without changes)
-  addParticle(startX: number, startY: number, targetX: number, targetY: number) {
-    const particle = new Particle(startX, startY, targetX, targetY, [], null as any, null as any)
-    this.particles.push(particle)
-
-    // Start animation loop if not running
-    if (!this.animationId) {
-      this.startAnimation()
-    }
-
-    return particle
-  }
-
-  startAnimation() {
-    const animate = () => {
-      this.update()
-      this.draw()
-
-      if (this.particles.length > 0) {
-        this.animationId = requestAnimationFrame(animate)
-      } else {
-        this.animationId = null
-      }
-    }
-    animate()
+  addChangeParticle(source: Typewriter, target: Typewriter, changes: Uint8Array[]) {
+    const startX = source.left
+    const startY = source.top
+    const targetX = target.left
+    const targetY = target.top
+    this.particles.push(new Particle(changes, source, target, startX, startY, targetX, targetY))
   }
 
   update() {
@@ -472,221 +379,65 @@ class ParticleManager {
     // Update all particles and remove completed ones
     this.particles = this.particles.filter((particle) => {
       const isComplete = particle.update()
-      if (isComplete) {
-        completedParticles.push(particle)
-      }
+      if (isComplete) completedParticles.push(particle)
       return !isComplete
     })
 
     // Process completed particles AFTER filtering is done
     completedParticles.forEach((particle) => {
-      this.onParticleComplete(particle)
-    })
-  }
+      particle.target.applyChanges(particle.changes)
 
-  draw() {
-    // Draw particles on a global overlay canvas
-    if (!this.overlayCanvas) {
-      this.createOverlay()
-    }
-
-    this.overlayCtx.clearRect(0, 0, window.innerWidth, window.innerHeight)
-
-    this.particles.forEach((particle) => {
-      particle.draw(this.overlayCtx)
-    })
-  }
-
-  overlayCanvas!: HTMLCanvasElement
-  overlayCtx!: CanvasRenderingContext2D
-
-  createOverlay() {
-    this.overlayCanvas = document.createElement("canvas")
-    this.overlayCanvas.style.position = "fixed"
-    this.overlayCanvas.style.top = "0"
-    this.overlayCanvas.style.left = "0"
-    this.overlayCanvas.style.width = "100vw"
-    this.overlayCanvas.style.height = "100vh"
-    this.overlayCanvas.style.pointerEvents = "none"
-    this.overlayCanvas.style.zIndex = "1000"
-    this.overlayCanvas.width = window.innerWidth
-    this.overlayCanvas.height = window.innerHeight
-
-    this.overlayCtx = this.overlayCanvas.getContext("2d")!
-    document.body.appendChild(this.overlayCanvas)
-  }
-
-  onParticleComplete(particle: Particle) {
-    // Apply changes if this particle was carrying them
-    if (particle.changes.length > 0 && particle.target) {
-      // Use special method for sync server to avoid broadcasting
+      // TODO: Can we only only rebroadcast to peers that don't already have this change?
+      // Otherwise, 3 sync servers would generate an infinite loop A->B->C->A->B…
       if (particle.target instanceof SyncServer) {
-        ;(particle.target as SyncServer).applyChangesFromParticle(particle.changes, particle.source)
-      } else {
-        particle.target.applyChanges(particle.changes)
+        allTypewriters
+          .filter((tw) => tw !== particle.target && tw !== particle.source)
+          .forEach((typewriter) => particleManager.addChangeParticle(particle.target, typewriter, particle.changes))
       }
-    } else {
-    }
+    })
+
+    // Render particles
+    this.ctx.clearRect(0, 0, window.innerWidth, window.innerHeight)
+    this.particles.forEach((particle) => particle.draw(this.ctx))
   }
 }
 
 // Global particle manager
 const particleManager = new ParticleManager()
+const animate = () => {
+  particleManager.update()
+  requestAnimationFrame(animate)
+}
+requestAnimationFrame(animate)
 
 // SYNC SERVER CLASS ################################################################################
 
-class SyncServer extends TypewriterInstance {
+class SyncServer extends Typewriter {
   constructor(x: number, y: number) {
     super(x, y)
-
-    // Override styling for sync server
-    this.elm.style.backgroundColor = "hsl(200, 70%, 95%)"
-    this.elm.style.border = "2px solid hsl(200, 70%, 70%)"
-    this.elm.style.borderRadius = "8px"
-  }
-
-  // Apply changes without broadcasting (for particle delivery)
-  applyChangesFromParticle(changes: Uint8Array[], sourceTypewriter?: TypewriterInstance) {
-    // Apply changes to self
-    super.applyChanges(changes)
-
-    // Broadcast to all other typewriters via particles (excluding source)
-    this.broadcastChangesViaParticles(changes, sourceTypewriter)
-  }
-
-  // Override applyChanges to add broadcasting (for manual sync)
-  applyChanges(changes: Uint8Array[]) {
-    // Apply changes to self
-    super.applyChanges(changes)
-
-    // Broadcast to all other typewriters (not the sync server itself)
-    this.broadcastChanges(changes)
-  }
-
-  // Broadcast changes via particles
-  broadcastChangesViaParticles(changes: Uint8Array[], excludeSource?: TypewriterInstance) {
-    const targetTypewriters = allTypewriters.filter((tw) => tw !== this && tw !== excludeSource)
-
-    targetTypewriters.forEach((typewriter, index) => {
-      particleManager.addChangeParticle(this, typewriter, changes)
-    })
-  }
-
-  // Legacy immediate broadcast (for manual sync)
-  broadcastChanges(changes: Uint8Array[]) {
-    allTypewriters.forEach((typewriter) => {
-      if (typewriter !== this) {
-        // Don't broadcast to self
-
-        typewriter.applyChanges(changes)
-      }
-    })
+    allSyncServers.push(this)
+    this.elm.classList.add("server")
   }
 }
 
 // INSTANCE MANAGEMENT ##############################################################################
 
-let focusedInstance: TypewriterInstance | null = null
-let syncServer: SyncServer | null = null
-let lastExtractedChanges: Uint8Array[] = [] // Store changes for testing
-let allTypewriters: TypewriterInstance[] = [] // Track all typewriter instances
+let focusedInstance: Typewriter | null = null
+let allTypewriters: Typewriter[] = []
+let allSyncServers: SyncServer[] = []
 
-// Helper function to copy changes from one typewriter to another
-function copyChanges(source: TypewriterInstance, target: TypewriterInstance) {
-  const changes = source.extractChanges()
-  if (changes.length > 0) target.applyChanges(changes)
-}
-
-// Spawn new typewriter by clicking in top-left corner
+// Spawn new typewriter by dragging from the top-left corner
 window.addEventListener("mousedown", (e) => {
-  if (e.clientX <= 50 && e.clientY <= 50) {
-    let newInstance = new TypewriterInstance(e.clientX, e.clientY)
-    newInstance.focus()
-    newInstance.startDrag(e)
-  }
+  if (e.clientX <= 50 && e.clientY <= 50) new Typewriter(e.clientX, e.clientY)
+  if (e.clientX >= window.innerWidth - 50 && e.clientY <= 50) new SyncServer(e.clientX, e.clientY)
 })
 
+// Handle typing input
 window.addEventListener("keydown", (e) => {
   if (!focusedInstance) return
-
-  // Manual change extraction - press Ctrl+E
-  if (e.key === "e" && e.ctrlKey) {
-    const changes = focusedInstance.extractChanges()
-    lastExtractedChanges = changes // Store for manual application
-
-    if (changes.length > 0) {
-    }
-
-    e.preventDefault()
-    return
-  }
-
-  // Manual change application - press Ctrl+A
-  if (e.key === "a" && e.ctrlKey) {
-    if (lastExtractedChanges.length > 0) {
-      focusedInstance.applyChanges(lastExtractedChanges)
-    } else {
-    }
-
-    e.preventDefault()
-    return
-  }
-
-  // Copy changes TO sync server - press Ctrl+S
-  if (e.key === "s" && e.ctrlKey) {
-    if (syncServer && focusedInstance !== syncServer) {
-      copyChanges(focusedInstance, syncServer)
-    } else {
-    }
-    e.preventDefault()
-    return
-  }
-
-  // Send changes via PARTICLE to sync server - press Ctrl+Shift+S
-  if (e.key === "S" && e.ctrlKey) {
-    if (syncServer && focusedInstance !== syncServer) {
-      const changes = focusedInstance.extractChanges()
-      if (changes.length > 0) {
-        particleManager.addChangeParticle(focusedInstance, syncServer, changes)
-      } else {
-      }
-    } else {
-    }
-    e.preventDefault()
-    return
-  }
-
-  // Copy changes FROM sync server - press Ctrl+R
-  if (e.key === "r" && e.ctrlKey) {
-    if (syncServer && focusedInstance !== syncServer) {
-      copyChanges(syncServer, focusedInstance)
-    } else {
-    }
-    e.preventDefault()
-    return
-  }
-
-  // Test particle animation - press Ctrl+P
-  if (e.key === "p" && e.ctrlKey) {
-    if (syncServer) {
-      // Get positions of source and target
-      const sourceRect = focusedInstance.elm.getBoundingClientRect()
-      const targetRect = syncServer.elm.getBoundingClientRect()
-
-      const startX = sourceRect.left + sourceRect.width / 2
-      const startY = sourceRect.top + sourceRect.height / 2
-      const targetX = targetRect.left + targetRect.width / 2
-      const targetY = targetRect.top + targetRect.height / 2
-
-      particleManager.addParticle(startX, startY, targetX, targetY)
-    }
-    e.preventDefault()
-    return
-  }
-
   if (e.key.length === 1) return focusedInstance.insertCharacter(e.key)
+  if (e.key === "Enter") return focusedInstance.insertCharacter("\n")
   if (e.key === "Backspace") return focusedInstance.deleteCharacter()
-  if (e.key === "Enter") return focusedInstance.insertNewline()
   if (e.key === "ArrowLeft") return focusedInstance.moveLeft()
   if (e.key === "ArrowRight") return focusedInstance.moveRight()
   e.preventDefault()

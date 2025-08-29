@@ -163,6 +163,9 @@ class Typewriter {
   insertionX = margin * gw
   insertionY = padding * lh
 
+  // Connection tracking
+  connectedServers = new Set<SyncServer>()
+
   constructor(public left: number, public top: number) {
     this.elm.className = "text"
     this.elm.style.left = `${left}px`
@@ -275,6 +278,26 @@ class Typewriter {
   // Helper method to get changes since last tracked state
   getDocumentChanges() {
     return Automerge.getChanges(this.previousDocState, this.doc)
+  }
+
+  // Get all changes since document creation for full sync
+  getAllDocumentChanges() {
+    return Automerge.getChanges(rootDoc, this.doc)
+  }
+
+  // Sync with another typewriter by exchanging missing changes
+  syncWith(other: Typewriter) {
+    // Send our changes to the other typewriter (marked as catch-up sync)
+    const ourChanges = this.getAllDocumentChanges()
+    if (ourChanges.length > 0) {
+      particleManager.addChangeParticle(this, other, ourChanges, true)
+    }
+
+    // Get their changes and send to us (marked as catch-up sync)
+    const theirChanges = other.getAllDocumentChanges()
+    if (theirChanges.length > 0) {
+      particleManager.addChangeParticle(other, this, theirChanges, true)
+    }
   }
 
   // Apply changes from another document (from particles)
@@ -510,13 +533,40 @@ class Particle {
   lastKnownDistance = Infinity
   character: string = ""
   color: string = "#000"
+  isCatchUpSync: boolean = false
 
-  constructor(public changes: Uint8Array[], public source: Typewriter, public target: Typewriter) {
+  constructor(public changes: Uint8Array[], public source: Typewriter, public target: Typewriter, isCatchUpSync = false) {
     this.position = source.gridToScreenCoords(source.insertionX / gw, source.insertionY / lh)
+    this.isCatchUpSync = isCatchUpSync
   }
 
   draw(ctx: CanvasRenderingContext2D) {
-    if (this.character === "") {
+    if (this.isCatchUpSync) {
+      // Special rendering for catch-up sync particles
+      const radius = 20
+      const time = Date.now() / 200
+      
+      // Pulsing outer ring
+      ctx.strokeStyle = "#4a90e2"
+      ctx.lineWidth = 3
+      ctx.beginPath()
+      ctx.arc(this.position.x, this.position.y, radius + Math.sin(time) * 3, 0, TAU)
+      ctx.stroke()
+      
+      // Inner filled circle
+      ctx.fillStyle = "#4a90e2"
+      ctx.beginPath()
+      ctx.arc(this.position.x, this.position.y, radius * 0.7, 0, TAU)
+      ctx.fill()
+      
+      // "SYNC" text
+      ctx.fillStyle = "white"
+      ctx.font = "bold 10px sans-serif"
+      ctx.textAlign = "center"
+      ctx.textBaseline = "middle"
+      ctx.fillText("SYNC", this.position.x, this.position.y)
+      
+    } else if (this.character === "") {
       // Draw blank circle for spaces
       ctx.strokeStyle = this.color
       ctx.lineWidth = 2
@@ -544,8 +594,8 @@ class ParticleManager {
   particles: Particle[] = []
 
   // Add particle carrying changes
-  addChangeParticle(source: Typewriter, target: Typewriter, changes: Uint8Array[]) {
-    this.particles.push(new Particle(changes, source, target))
+  addChangeParticle(source: Typewriter, target: Typewriter, changes: Uint8Array[], isCatchUpSync = false) {
+    this.particles.push(new Particle(changes, source, target, isCatchUpSync))
   }
 
   update() {
@@ -627,7 +677,7 @@ class ParticleManager {
     // Clear and render underlay content (connection lines)
     underlayCtx.clearRect(0, 0, window.innerWidth, window.innerHeight)
 
-    // Render sync server connections on underlay
+    // Update connections and render sync server connections on underlay
     allSyncServers.forEach((server) => {
       underlayCtx.lineWidth = 3
 
@@ -640,23 +690,37 @@ class ParticleManager {
         height: serverDims.height,
       }
 
-      // Draw lines to all typewriters in range
+      // Check connections to all typewriters
       allTypewriters.forEach((typewriter) => {
-        if (typewriter === server) return // Don't draw line to self
-
-        // Get typewriter rectangle
-        const typewriterDims = getTypewriterDimensions(typewriter)
-        const typewriterRect = {
-          left: typewriter.left,
-          top: typewriter.top,
-          width: typewriterDims.width,
-          height: typewriterDims.height,
-        }
+        if (typewriter === server) return // Don't connect to self
 
         // Check distance between rectangle edges
         const edgeDist = getEdgeDistance(server, typewriter)
+        const inRange = edgeDist <= SYNC_RANGE
 
-        if (edgeDist <= SYNC_RANGE) {
+        // Track connection state changes
+        const wasConnected = typewriter.connectedServers.has(server)
+        
+        if (inRange && !wasConnected) {
+          // New connection established - sync
+          typewriter.connectedServers.add(server)
+          typewriter.syncWith(server)
+        } else if (!inRange && wasConnected) {
+          // Connection lost
+          typewriter.connectedServers.delete(server)
+        }
+
+        // Draw connection line if in range
+        if (inRange) {
+          // Get typewriter rectangle
+          const typewriterDims = getTypewriterDimensions(typewriter)
+          const typewriterRect = {
+            left: typewriter.left,
+            top: typewriter.top,
+            width: typewriterDims.width,
+            height: typewriterDims.height,
+          }
+
           // Calculate fade: 1.0 at 0-200px, fade to 0.1 from 200-400px
           const alpha = renormalized(edgeDist, SYNC_RANGE * 0.5, SYNC_RANGE, 0.5, 0.1, true)
 

@@ -1,4 +1,5 @@
 import * as Automerge from "@automerge/automerge"
+const TAU = Math.PI * 2
 
 // TYPES ###########################################################################################
 
@@ -410,11 +411,6 @@ class Typewriter {
 // PARTICLE SYSTEM ##################################################################################
 
 class Particle {
-  angle = 0
-  speed = 0
-  progress = 0
-  size = 8
-  color = "hsl(300, 80%, 60%)"
   position: Position
   lastKnownDistance = Infinity
 
@@ -423,9 +419,9 @@ class Particle {
   }
 
   draw(ctx: CanvasRenderingContext2D) {
-    ctx.fillStyle = this.color
+    ctx.fillStyle = "#000"
     ctx.beginPath()
-    ctx.arc(this.position.x, this.position.y, this.size, 0, Math.PI * 2)
+    ctx.arc(this.position.x, this.position.y, 8, 0, TAU)
     ctx.fill()
   }
 }
@@ -465,8 +461,8 @@ class ParticleManager {
       // Update particle movement toward the (potentially updated) target
       let dx = targetPos.x - particle.position.x
       let dy = targetPos.y - particle.position.y
-      particle.position.x += dx / 20
-      particle.position.y += dy / 20
+      particle.position.x += dx / 50
+      particle.position.y += dy / 50
 
       dx = targetPos.x - particle.position.x
       dy = targetPos.y - particle.position.y

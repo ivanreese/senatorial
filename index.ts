@@ -1,5 +1,14 @@
 import * as Automerge from "@automerge/automerge"
 
+// AUTOMERGE SETUP #################################################################################
+
+// Create canonical root document that all typewriter docs will fork from
+const rootDoc = Automerge.change(Automerge.init<{ characters: string }>(), (doc) => {
+  doc.characters = ""
+})
+
+console.log("Root document created:", rootDoc)
+
 // Calculate the scale factor that'll get us to the output DPI we want
 let charactersPerInch = 11 // this is based on the actual typewriter
 let linesPerInch = 8 // ROUGHLY — this is based on the glyph scan Todd sent me
@@ -67,7 +76,8 @@ atlasImg.onload = () => {
 class TypewriterInstance {
   elm = document.createElement("canvas")
   ctx = this.elm.getContext("2d")!
-  characters: string[] = []
+  doc = Automerge.clone(rootDoc)
+  previousDocState = this.doc
   insertionPoint = 0
 
   // Position to draw the next char
@@ -88,6 +98,9 @@ class TypewriterInstance {
     this.elm.onmousedown = (e) => {
       this.startDrag(e)
     }
+
+    console.log("TypewriterInstance created with doc:", this.doc)
+    console.log("Doc has characters field:", "characters" in this.doc)
   }
 
   focus() {
@@ -124,35 +137,50 @@ class TypewriterInstance {
   }
 
   insertCharacter(char: string) {
-    this.characters.splice(this.insertionPoint, 0, char)
+    this.previousDocState = this.doc
+    this.doc = Automerge.change(this.doc, (doc) => {
+      doc.characters = doc.characters.slice(0, this.insertionPoint) + char + doc.characters.slice(this.insertionPoint)
+    })
     this.insertionPoint++
+    console.log("Character inserted:", char, "Doc characters now:", this.doc.characters)
+    console.log("Insertion point:", this.insertionPoint)
     this.render()
   }
 
   deleteCharacter() {
     if (this.insertionPoint > 0) {
-      this.characters.splice(this.insertionPoint - 1, 1)
+      this.previousDocState = this.doc
+      this.doc = Automerge.change(this.doc, (doc) => {
+        doc.characters = doc.characters.slice(0, this.insertionPoint - 1) + doc.characters.slice(this.insertionPoint)
+      })
       this.insertionPoint--
+      console.log("Character deleted, Doc characters now:", this.doc.characters)
       this.render()
     }
   }
 
   insertNewline() {
-    this.characters.splice(this.insertionPoint, 0, "\n")
+    this.previousDocState = this.doc
+    this.doc = Automerge.change(this.doc, (doc) => {
+      doc.characters = doc.characters.slice(0, this.insertionPoint) + "\n" + doc.characters.slice(this.insertionPoint)
+    })
     this.insertionPoint++
+    console.log("Newline inserted, Doc characters now:", this.doc.characters)
     this.render()
   }
 
   moveLeft() {
     if (this.insertionPoint > 0) {
       this.insertionPoint--
+      console.log("Cursor moved left, insertion point:", this.insertionPoint)
       this.render()
     }
   }
 
   moveRight() {
-    if (this.insertionPoint < this.characters.length) {
+    if (this.insertionPoint < this.doc.characters.length) {
       this.insertionPoint++
+      console.log("Cursor moved right, insertion point:", this.insertionPoint)
       this.render()
     }
   }
@@ -199,9 +227,10 @@ class TypewriterInstance {
 
   drawAllText(draw: boolean) {
     let charIndex = 0
+    let characters = this.doc.characters
 
-    for (let i = 0; i < this.characters.length; i++) {
-      let char = this.characters[i]
+    for (let i = 0; i < characters.length; i++) {
+      let char = characters[i]
 
       // Handle newlines
       if (char === "\n") {
@@ -223,7 +252,7 @@ class TypewriterInstance {
 
       // For non-space chars, check if the whole word fits on current line
       let wordEnd = i
-      while (wordEnd < this.characters.length && this.characters[wordEnd] !== " " && this.characters[wordEnd] !== "\n") wordEnd++
+      while (wordEnd < characters.length && characters[wordEnd] !== " " && characters[wordEnd] !== "\n") wordEnd++
       let wordLength = wordEnd - i
 
       // If word won't fit on current line, wrap to next line

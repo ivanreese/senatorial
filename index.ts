@@ -79,6 +79,7 @@ class Typewriter {
   ctx = this.elm.getContext("2d")!
   doc = Automerge.clone(rootDoc)
   previousDocState = this.doc
+  speculativeDoc = this.doc
   insertionPoint = 0
 
   // Position to draw the next char
@@ -250,6 +251,45 @@ class Typewriter {
     return this.gridToScreenCoords(gridPos.cx, gridPos.cy)
   }
 
+  // Calculate where changes will be applied using speculative doc state
+  calculateChangeTargetPositionSpeculative(changes: Uint8Array[]): Position {
+    // Apply changes to the current speculative state to get the after state
+    const [afterDoc] = Automerge.applyChanges(Automerge.clone(this.speculativeDoc), changes)
+
+    const beforeChars = this.speculativeDoc.characters
+    const afterChars = afterDoc.characters
+
+    // Find the first difference between before and after
+    let changeIndex = 0
+    const minLength = Math.min(beforeChars.length, afterChars.length)
+
+    // Find first differing position
+    for (let i = 0; i < minLength; i++) {
+      if (beforeChars[i] !== afterChars[i]) {
+        changeIndex = i
+        break
+      }
+    }
+
+    // If no differences found in common length, change is at the end of shorter string
+    if (changeIndex === 0 && beforeChars.length !== afterChars.length) {
+      changeIndex = minLength
+    }
+
+    // Create a temporary typewriter with speculative doc for layout calculation
+    const tempTypewriter = Object.create(this)
+    tempTypewriter.doc = this.speculativeDoc
+
+    // Get grid position at the change index using the speculative doc
+    const gridPos = tempTypewriter.drawAllText(false, changeIndex)
+    if (!gridPos) {
+      // Fallback to current position if drawAllText doesn't return position
+      return { x: this.left, y: this.top }
+    }
+
+    return this.gridToScreenCoords(gridPos.cx, gridPos.cy)
+  }
+
   render() {
     // The width of the drawing canvas
     let w = gw * lineWidth
@@ -281,7 +321,8 @@ class Typewriter {
     if (focusedInstance === this) {
       this.ctx.fillStyle = `hsl(0, 70%, ${(Math.random() * 15 + 35) | 0}%)`
       this.ctx.beginPath()
-      this.ctx.roundRect(this.insertionX + gw * 0.05, this.insertionY - lh * 0.2, gw * 0.15, gh * 1.4, gw * 0.05)
+      let w = gw * 0.15
+      this.ctx.roundRect(this.insertionX - w / 2, this.insertionY - lh * 0.2, w, gh * 1.4, gw * 0.05)
       this.ctx.fill()
     }
   }
@@ -290,21 +331,27 @@ class Typewriter {
     this.cx = margin // Reset the cursor position to the top left
     this.cy = padding
 
-    let charIndex = 0
     let characters = this.doc.characters
+    if (draw) this.insertionPoint = Math.min(this.insertionPoint, characters.length)
+    let charIndex = 0
 
-    for (let i = 0; i < characters.length; i++) {
+    for (; charIndex < characters.length; charIndex++) {
       // Check if we should stop at this character index
       if (stopAtCharIndex !== undefined && charIndex >= stopAtCharIndex) {
         return { cx: this.cx, cy: this.cy }
       }
 
-      let char = characters[i]
+      // Check if this is where the insertion point should be
+      if (draw && charIndex === this.insertionPoint) {
+        this.insertionX = this.cx * gw
+        this.insertionY = this.cy * lh
+      }
+
+      let char = characters[charIndex]
 
       // Handle newlines
       if (char === "\n") {
         this.newline()
-        charIndex++
         continue
       }
 
@@ -315,14 +362,13 @@ class Typewriter {
         } else {
           this.cx++
         }
-        charIndex++
         continue
       }
 
       // For non-space chars, check if the whole word fits on current line
-      let wordEnd = i
+      let wordEnd = charIndex
       while (wordEnd < characters.length && characters[wordEnd] !== " " && characters[wordEnd] !== "\n") wordEnd++
-      let wordLength = wordEnd - i
+      let wordLength = wordEnd - charIndex
 
       // If word won't fit on current line, wrap to next line
       if (this.cx + wordLength > lineWidth - margin) this.newline()
@@ -340,13 +386,6 @@ class Typewriter {
       }
 
       this.cx++
-      charIndex++
-
-      // Check if this is where the insertion point should be
-      if (draw && charIndex === this.insertionPoint) {
-        this.insertionX = this.cx * gw
-        this.insertionY = this.cy * lh
-      }
     }
 
     // Check if insertion point is at the very end
@@ -376,22 +415,11 @@ class Particle {
   progress = 0
   size = 8
   color = "hsl(300, 80%, 60%)"
+  position: Position
+  lastKnownDistance = Infinity
 
-  constructor(public changes: Uint8Array[], public source: Typewriter, public target: Typewriter, public position: Position) {}
-
-  update() {
-    const targetPos = this.target.calculateChangeTargetPosition(this.changes)
-    let dx = targetPos.x - this.position.x
-    let dy = targetPos.y - this.position.y
-    this.position.x += dx / 20
-    this.position.y += dy / 20
-
-    // let angle = Math.atan2(dy, dx)
-    let dist = Math.hypot(dx, dy)
-    // this.speed += Math.min(dist, 0.1)
-    // this.position.x += Math.cos(angle) * this.speed
-    // this.position.y += Math.sin(angle) * this.speed
-    return dist < 10
+  constructor(public changes: Uint8Array[], public source: Typewriter, public target: Typewriter) {
+    this.position = source.gridToScreenCoords(source.insertionX / gw, source.insertionY / lh)
   }
 
   draw(ctx: CanvasRenderingContext2D) {
@@ -417,20 +445,43 @@ class ParticleManager {
 
   // Add particle carrying changes
   addChangeParticle(source: Typewriter, target: Typewriter, changes: Uint8Array[]) {
-    const startPos = source.gridToScreenCoords(source.insertionX / gw, source.insertionY / lh)
-    this.particles.push(new Particle(changes, source, target, startPos))
+    this.particles.push(new Particle(changes, source, target))
   }
 
   update() {
-    // Collect completed particles first
-    const completedParticles: Particle[] = []
+    // Reset all speculative docs to their base state
+    allTypewriters.forEach((tw) => (tw.speculativeDoc = Automerge.clone(tw.doc)))
 
-    // Update all particles and remove completed ones
-    this.particles = this.particles.filter((particle) => {
-      const isComplete = particle.update()
-      if (isComplete) completedParticles.push(particle)
-      return !isComplete
+    this.particles.sort((a, b) => a.lastKnownDistance - b.lastKnownDistance)
+
+    // Update particles in arrival order, maintaining speculative state
+    const completedParticles: Particle[] = []
+    const remainingParticles: Particle[] = []
+
+    this.particles.forEach((particle) => {
+      // Update particle target based on current speculative state
+      const targetPos = particle.target.calculateChangeTargetPositionSpeculative(particle.changes)
+
+      // Update particle movement toward the (potentially updated) target
+      let dx = targetPos.x - particle.position.x
+      let dy = targetPos.y - particle.position.y
+      particle.position.x += dx / 20
+      particle.position.y += dy / 20
+
+      dx = targetPos.x - particle.position.x
+      dy = targetPos.y - particle.position.y
+      const dist = Math.hypot(dx, dy)
+      particle.lastKnownDistance = dist
+
+      // Apply this particle's changes to the target's speculative doc for subsequent particles
+      const [newSpeculativeDoc] = Automerge.applyChanges(particle.target.speculativeDoc, particle.changes)
+      particle.target.speculativeDoc = newSpeculativeDoc
+
+      if (dist < 10) completedParticles.push(particle)
+      else remainingParticles.push(particle)
     })
+
+    this.particles = remainingParticles
 
     // Process completed particles AFTER filtering is done
     completedParticles.forEach((particle) => {

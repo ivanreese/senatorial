@@ -99,6 +99,7 @@ class Typewriter {
 
     this.focus()
     this.startDrag(left, top)
+    this.render()
   }
 
   startDrag(initialX: number, initialY: number) {
@@ -336,10 +337,10 @@ class Particle {
     let dy = this.targetY - this.y
     let angle = Math.atan2(dy, dx)
     let dist = Math.hypot(dx, dy)
-    this.speed += Math.min(dist, 0.01)
+    this.speed += Math.min(dist, 0.1)
     this.x += Math.cos(angle) * this.speed
     this.y += Math.sin(angle) * this.speed
-    return dist < 1
+    return dist < 10
   }
 
   draw(ctx: CanvasRenderingContext2D) {
@@ -365,8 +366,8 @@ class ParticleManager {
 
   // Add particle carrying changes
   addChangeParticle(source: Typewriter, target: Typewriter, changes: Uint8Array[]) {
-    const startX = source.left
-    const startY = source.top
+    const startX = source.left + (source.insertionX + gw / 2) * scale
+    const startY = source.top + (source.insertionY + gh / 2) * scale
     const targetX = target.left
     const targetY = target.top
     this.particles.push(new Particle(changes, source, target, startX, startY, targetX, targetY))

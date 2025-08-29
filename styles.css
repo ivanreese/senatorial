@@ -29,8 +29,6 @@ canvas.text {
   position: absolute;
   display: block;
   margin-inline: auto;
-  width: calc(100% - 8em);
-  max-width: 32em;
   background: white;
   border-radius: 1px;
   box-shadow: 0 1px 4px #0001;

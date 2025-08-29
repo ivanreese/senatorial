@@ -544,6 +544,13 @@ class Particle {
     this.position = source.gridToScreenCoords(source.insertionX / gw, source.insertionY / lh)
     this.previousPosition = { ...this.position }
     this.isCatchUpSync = isCatchUpSync
+    
+    // Determine and cache character and color once at creation
+    if (!isCatchUpSync) {
+      const targetInfo = target.calculateChangeTargetPositionSpeculative(changes)
+      this.character = targetInfo.character
+      this.color = targetInfo.color
+    }
   }
 
   draw(ctx: CanvasRenderingContext2D) {
@@ -659,10 +666,6 @@ class ParticleManager {
     this.particles.forEach((particle) => {
       // Update particle target based on current speculative state
       const targetInfo = particle.target.calculateChangeTargetPositionSpeculative(particle.changes)
-
-      // Update particle character and color
-      particle.character = targetInfo.character
-      particle.color = targetInfo.color
 
       // Physics constants
       const friction = 0.98

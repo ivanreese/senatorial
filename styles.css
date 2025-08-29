@@ -6,8 +6,8 @@
 body {
   margin: 0;
   font-family: system-ui;
-  /* background: hsl(40 20% 90%); */
-  background: #282a36;
+  background: hsl(40 20% 90%);
+  /* background: #282a36; */
   overflow: auto;
 }
 
@@ -38,8 +38,8 @@ canvas.text {
 }
 
 canvas.server {
-  background-color: hsl(200, 70%, 95%);
-  border: 2px solid hsl(200, 70%, 70%);
+  border: 4px solid #0005;
+  border-radius: 1rem;
 }
 
 .canvas-layer {

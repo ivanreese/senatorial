@@ -171,6 +171,9 @@ class Typewriter {
   // Particle tracking
   lastSpawnedParticle: Particle | null = null
 
+  // Background color
+  backgroundColor: string = "white"
+
   constructor(public left: number, public top: number) {
     this.elm.className = "text"
     this.elm.style.left = `${left}px`
@@ -443,6 +446,10 @@ class Typewriter {
 
     if (oldHeight < this.elm.height) document.body.scrollBy({ top: this.elm.height - oldHeight })
 
+    // Fill background color
+    this.ctx.fillStyle = this.backgroundColor
+    this.ctx.fillRect(0, 0, w, h)
+
     // The extra padding on chars means they overlap, so this allows them to overlap nicely
     this.ctx.globalCompositeOperation = "darken" // Have to set this every time we resize the canvas.
 
@@ -591,13 +598,6 @@ class Particle {
       ctx.beginPath()
       ctx.arc(this.position.x, this.position.y, radius * 0.7, 0, TAU)
       ctx.fill()
-
-      // "SYNC" text
-      ctx.fillStyle = "white"
-      ctx.font = "bold 10px sans-serif"
-      ctx.textAlign = "center"
-      ctx.textBaseline = "middle"
-      ctx.fillText("SYNC", this.position.x, this.position.y)
     } else if (this.character === "") {
       // Draw blank circle for spaces
       ctx.strokeStyle = this.color
@@ -717,9 +717,9 @@ class ParticleManager {
       const hasValidConnection = this.checkParticleConnection(particle)
 
       // Physics constants
-      const forceConstant = 200 // Constant force magnitude
+      const forceConstant = 50 // Constant force magnitude
       const mouseSpringConstant = 100
-      const damping = 0.88 // Velocity damping (applied to velocity each frame)
+      const damping = 0.98 // Velocity damping (applied to velocity each frame)
       const dt = 1 / 60 // Time step
 
       let forceX = 0
@@ -781,7 +781,7 @@ class ParticleManager {
       const [newSpeculativeDoc] = Automerge.applyChanges(particle.target.speculativeDoc, particle.changes)
       particle.target.speculativeDoc = newSpeculativeDoc
 
-      if (dist < 15 && !particle.isGrabbed && hasValidConnection) completedParticles.push(particle)
+      if (dist < 3 && !particle.isGrabbed && hasValidConnection) completedParticles.push(particle)
       else remainingParticles.push(particle)
     })
 
@@ -915,8 +915,10 @@ requestAnimationFrame(animate)
 class SyncServer extends Typewriter {
   constructor(x: number, y: number) {
     super(x, y)
+    this.backgroundColor = "#f0f2f7" // Light grey background
     allSyncServers.push(this)
     this.elm.classList.add("server")
+    this.render()
   }
 
   // Override render (sync range circle now drawn by particle manager)

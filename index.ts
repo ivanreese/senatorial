@@ -168,6 +168,9 @@ class Typewriter {
   // Connection tracking
   connectedServers = new Set<SyncServer>()
 
+  // Particle tracking
+  lastSpawnedParticle: Particle | null = null
+
   constructor(public left: number, public top: number) {
     this.elm.className = "text"
     this.elm.style.left = `${left}px`
@@ -307,12 +310,12 @@ class Typewriter {
   applyChanges(changes: Uint8Array[]): Position {
     // Calculate where changes will be applied before applying them
     const targetPosition = this.calculateChangeTargetPosition(changes)
-    
+
     this.previousDocState = this.doc
     const [newDoc] = Automerge.applyChanges(this.doc, changes)
     this.doc = newDoc
     this.render()
-    
+
     return targetPosition
   }
 
@@ -538,13 +541,15 @@ class Typewriter {
 
 class Particle {
   position: Position
-  previousPosition: Position
   velocity: Position = { x: 0, y: 0 }
   lastKnownDistance = Infinity
   character: string = ""
   color: string = "#000"
   isCatchUpSync: boolean = false
   isGrabbed: boolean = false
+  previousParticle: Particle | null = null
+  nextParticle: Particle | null = null
+  mass: number = 0.1
 
   constructor(public changes: Uint8Array[], public source: Typewriter, public target: Typewriter, isCatchUpSync = false, sourcePosition?: Position) {
     // Use provided source position or fall back to source's insertion point
@@ -553,7 +558,6 @@ class Particle {
     } else {
       this.position = source.gridToScreenCoords(source.insertionX / gw, source.insertionY / lh)
     }
-    this.previousPosition = { ...this.position }
     this.isCatchUpSync = isCatchUpSync
 
     // Determine and cache character and color once at creation
@@ -661,7 +665,16 @@ class ParticleManager {
 
   // Add particle carrying changes
   addChangeParticle(source: Typewriter, target: Typewriter, changes: Uint8Array[], isCatchUpSync = false, sourcePosition?: Position) {
-    this.particles.push(new Particle(changes, source, target, isCatchUpSync, sourcePosition))
+    const newParticle = new Particle(changes, source, target, isCatchUpSync, sourcePosition)
+
+    // Link this particle to the previous one spawned by the same source
+    if (source.lastSpawnedParticle) {
+      source.lastSpawnedParticle.nextParticle = newParticle
+      newParticle.previousParticle = source.lastSpawnedParticle
+    }
+    source.lastSpawnedParticle = newParticle
+
+    this.particles.push(newParticle)
   }
 
   update() {
@@ -679,47 +692,51 @@ class ParticleManager {
       const targetInfo = particle.target.calculateChangeTargetPositionSpeculative(particle.changes)
 
       // Physics constants
-      const friction = 0.99
-      const targetForce = 2
-      const mouseForce = 3
-
-      // Store current position for Verlet integration
-      const currentX = particle.position.x
-      const currentY = particle.position.y
+      const forceConstant = 200 // Constant force magnitude
+      const mouseSpringConstant = 100
+      const damping = 0.88
+      const dt = 1 / 60 // Time step
 
       let forceX = 0
       let forceY = 0
 
       if (particle.isGrabbed) {
-        // Strong force toward mouse
+        // Mouse spring with minimum length - repels when too close
         const dx = this.mousePosition.x - particle.position.x
         const dy = this.mousePosition.y - particle.position.y
-        forceX = dx * mouseForce
-        forceY = dy * mouseForce
+        const distance = Math.hypot(dx, dy)
+        if (distance > 0) {
+          forceX = (dx / distance) * mouseSpringConstant * distance
+          forceY = (dy / distance) * mouseSpringConstant * distance
+        }
       } else {
-        // Constant force toward target (normalized direction)
+        // Constant force toward target
         const dx = targetInfo.position.x - particle.position.x
         const dy = targetInfo.position.y - particle.position.y
         const distance = Math.hypot(dx, dy)
 
         if (distance > 0.1) {
-          // Avoid division by zero
-          forceX = (dx / distance) * targetForce
-          forceY = (dy / distance) * targetForce
+          // Constant force in direction of target
+          forceX = (dx / distance) * forceConstant
+          forceY = (dy / distance) * forceConstant
         }
       }
 
-      // Verlet integration
-      particle.position.x = currentX + (currentX - particle.previousPosition.x) * friction + forceX * 0.01
-      particle.position.y = currentY + (currentY - particle.previousPosition.y) * friction + forceY * 0.01
+      // Euler integration
+      const accelerationX = forceX / particle.mass
+      const accelerationY = forceY / particle.mass
 
-      // Update velocity for momentum calculation
-      particle.velocity.x = particle.position.x - currentX
-      particle.velocity.y = particle.position.y - currentY
+      // Update velocity with acceleration
+      particle.velocity.x += accelerationX * dt
+      particle.velocity.y += accelerationY * dt
 
-      // Update previous position
-      particle.previousPosition.x = currentX
-      particle.previousPosition.y = currentY
+      // Apply damping to velocity
+      particle.velocity.x *= damping
+      particle.velocity.y *= damping
+
+      // Update position with velocity
+      particle.position.x += particle.velocity.x * dt
+      particle.position.y += particle.velocity.y * dt
 
       // Calculate distance for completion check
       const dx = targetInfo.position.x - particle.position.x
@@ -740,6 +757,15 @@ class ParticleManager {
     // Process completed particles AFTER filtering is done
     completedParticles.forEach((particle) => {
       const targetPosition = particle.target.applyChanges(particle.changes)
+
+      // Unlink this particle from the chain
+      if (particle.previousParticle) particle.previousParticle.nextParticle = particle.nextParticle
+      if (particle.nextParticle) particle.nextParticle.previousParticle = particle.previousParticle
+
+      // Update source's lastSpawnedParticle if this was the last one
+      if (particle.source.lastSpawnedParticle === particle) {
+        particle.source.lastSpawnedParticle = null
+      }
 
       // Rebroadcast logic for sync servers
       if (particle.target instanceof SyncServer) {

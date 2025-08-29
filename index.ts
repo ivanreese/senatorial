@@ -292,13 +292,18 @@ class Typewriter {
 
   // Sync with another typewriter by exchanging missing changes
   syncWith(other: Typewriter) {
-    // Send our changes to the other typewriter (marked as catch-up sync)
+    // Only sync if documents have different change histories
+    if (Automerge.equals(this.doc, other.doc)) {
+      return // Already in sync
+    }
+    
+    // Send our changes to them (marked as catch-up sync)
     const ourChanges = this.getAllDocumentChanges()
     if (ourChanges.length > 0) {
       particleManager.addChangeParticle(this, other, ourChanges, true)
     }
 
-    // Get their changes and send to us (marked as catch-up sync)
+    // Send their changes to us (marked as catch-up sync)
     const theirChanges = other.getAllDocumentChanges()
     if (theirChanges.length > 0) {
       particleManager.addChangeParticle(other, this, theirChanges, true)

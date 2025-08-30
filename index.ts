@@ -553,6 +553,7 @@ class Typewriter {
 
 class Particle {
   position: Position
+  spawnTime: number
   velocity: Position = { x: 0, y: 0 }
   lastKnownDistance = Infinity
   character: string = ""
@@ -570,6 +571,7 @@ class Particle {
     } else {
       this.position = source.gridToScreenCoords(source.insertionX / gw, source.insertionY / lh)
     }
+    this.spawnTime = Date.now()
     this.isCatchUpSync = isCatchUpSync
 
     // Determine and cache character and color once at creation
@@ -580,17 +582,68 @@ class Particle {
     }
   }
 
+  // Check if this particle can complete (same logic as in ParticleManager.update)
+  canComplete(): boolean {
+    // Check if there's a valid connection path
+    const hasValidConnection = this.hasValidConnection()
+    if (!hasValidConnection) return false
+
+    // Check if previous particle is closer (blocks completion)
+    if (this.previousParticle && this.previousParticle.lastKnownDistance > this.lastKnownDistance) {
+      return false
+    }
+
+    return true
+  }
+
+  // Check if particle has valid connection path (extracted from ParticleManager)
+  hasValidConnection(): boolean {
+    if (this.source instanceof SyncServer && this.target instanceof SyncServer) {
+      // SS → SS: check if sync servers are within range of each other
+      const dist = getEdgeDistance(this.source, this.target)
+      return dist <= SYNC_RANGE
+    } else if (this.target instanceof SyncServer) {
+      // TW → SS: source must be connected to target sync server
+      return this.source.connectedServers.has(this.target)
+    } else if (this.source instanceof SyncServer) {
+      // SS → TW: target must be connected to source sync server
+      return this.target.connectedServers.has(this.source)
+    }
+    // No TW → TW connections, so other cases are invalid
+    return false
+  }
+
   draw(ctx: CanvasRenderingContext2D) {
+    // Calculate radius scale only if particle can complete
+    let radiusScale = 1.0
+
+    if (this.canComplete()) {
+      const fadeInDuration = 150
+      const fadeDistance = 30
+
+      // Fade in based on time since spawn
+      const timeSinceSpawn = Date.now() - this.spawnTime
+      if (timeSinceSpawn < fadeInDuration) {
+        radiusScale = Math.min(radiusScale, timeSinceSpawn / fadeInDuration)
+      }
+
+      // Fade out near target (within 30px of target)
+      if (this.lastKnownDistance < fadeDistance) {
+        radiusScale = renormalized(this.lastKnownDistance, fadeDistance, 0, 1, 0.1)
+      }
+    }
+
     if (this.isCatchUpSync) {
       // Special rendering for catch-up sync particles
-      const radius = 20
+      const baseRadius = 20
+      const radius = baseRadius * radiusScale
       const time = Date.now() / 200
 
       // Pulsing outer ring
       ctx.strokeStyle = "#4a90e2"
       ctx.lineWidth = 3
       ctx.beginPath()
-      ctx.arc(this.position.x, this.position.y, radius + Math.sin(time) * 3, 0, TAU)
+      ctx.arc(this.position.x, this.position.y, radius + Math.sin(time) * 3 * radiusScale, 0, TAU)
       ctx.stroke()
 
       // Inner filled circle
@@ -600,21 +653,27 @@ class Particle {
       ctx.fill()
     } else if (this.character === "") {
       // Draw blank circle for spaces
+      const baseRadius = 8
+      const radius = baseRadius * radiusScale
+
       ctx.strokeStyle = this.color
       ctx.lineWidth = 2
       ctx.beginPath()
-      ctx.arc(this.position.x, this.position.y, 8, 0, TAU)
+      ctx.arc(this.position.x, this.position.y, radius, 0, TAU)
       ctx.stroke()
     } else {
       // Draw character with background circle
+      const baseRadius = 12
+      const radius = baseRadius * radiusScale
+
       ctx.fillStyle = this.color
       ctx.beginPath()
-      ctx.arc(this.position.x, this.position.y, 12, 0, TAU)
+      ctx.arc(this.position.x, this.position.y, radius, 0, TAU)
       ctx.fill()
 
-      // Draw character text
+      // Draw character text (scale font size with radius)
       ctx.fillStyle = "white"
-      ctx.font = "14px monospace"
+      ctx.font = `${14 * radiusScale}px monospace`
       ctx.textAlign = "center"
       ctx.textBaseline = "middle"
       ctx.fillText(this.character, this.position.x, this.position.y)
@@ -668,23 +727,6 @@ class ParticleManager {
     })
   }
 
-  // Check if particle has valid connection path
-  checkParticleConnection(particle: Particle): boolean {
-    if (particle.source instanceof SyncServer && particle.target instanceof SyncServer) {
-      // SS → SS: check if sync servers are within range of each other
-      const dist = getEdgeDistance(particle.source, particle.target)
-      return dist <= SYNC_RANGE
-    } else if (particle.target instanceof SyncServer) {
-      // TW → SS: source must be connected to target sync server
-      return particle.source.connectedServers.has(particle.target)
-    } else if (particle.source instanceof SyncServer) {
-      // SS → TW: target must be connected to source sync server
-      return particle.target.connectedServers.has(particle.source)
-    }
-    // No TW → TW connections, so other cases are invalid
-    return false
-  }
-
   // Add particle carrying changes
   addChangeParticle(source: Typewriter, target: Typewriter, changes: Uint8Array[], isCatchUpSync = false, sourcePosition?: Position) {
     const newParticle = new Particle(changes, source, target, isCatchUpSync, sourcePosition)
@@ -713,13 +755,11 @@ class ParticleManager {
       // Update particle target based on current speculative state
       const targetInfo = particle.target.calculateChangeTargetPositionSpeculative(particle.changes)
 
-      // Check if there's a valid connection path for this particle
-      const hasValidConnection = this.checkParticleConnection(particle)
-
       // Physics constants
-      const forceConstant = 50 // Constant force magnitude
-      const mouseSpringConstant = 100
-      const damping = 0.98 // Velocity damping (applied to velocity each frame)
+      const forceConstant = 40 // Constant force magnitude
+      const mouseSpringConstant = 20
+      const damping = 0.96 // Velocity damping (applied to velocity each frame)
+      const grabDamping = 0.8 // Velocity damping (applied to velocity each frame)
       const dt = 1 / 60 // Time step
 
       let forceX = 0
@@ -735,13 +775,8 @@ class ParticleManager {
           forceY = (dy / distance) * mouseSpringConstant * distance
         }
       } else {
-        // Only apply target force if no previous particle is further away
-        let shouldApplyTargetForce = true
-        if (particle.previousParticle && particle.previousParticle.lastKnownDistance > particle.lastKnownDistance) {
-          shouldApplyTargetForce = false
-        }
-
-        if (shouldApplyTargetForce && hasValidConnection) {
+        // Only apply target force if particle can complete
+        if (particle.canComplete()) {
           // Constant force toward target
           const dx = targetInfo.position.x - particle.position.x
           const dy = targetInfo.position.y - particle.position.y
@@ -764,8 +799,8 @@ class ParticleManager {
       particle.velocity.y += accelerationY * dt
 
       // Apply velocity damping (simpler linear damping)
-      particle.velocity.x *= damping
-      particle.velocity.y *= damping
+      particle.velocity.x *= particle.isGrabbed ? grabDamping : damping
+      particle.velocity.y *= particle.isGrabbed ? grabDamping : damping
 
       // Update position with velocity
       particle.position.x += particle.velocity.x * dt
@@ -781,7 +816,7 @@ class ParticleManager {
       const [newSpeculativeDoc] = Automerge.applyChanges(particle.target.speculativeDoc, particle.changes)
       particle.target.speculativeDoc = newSpeculativeDoc
 
-      if (dist < 3 && !particle.isGrabbed && hasValidConnection) completedParticles.push(particle)
+      if (dist < 6 && !particle.isGrabbed && particle.canComplete()) completedParticles.push(particle)
       else remainingParticles.push(particle)
     })
 
@@ -915,7 +950,7 @@ requestAnimationFrame(animate)
 class SyncServer extends Typewriter {
   constructor(x: number, y: number) {
     super(x, y)
-    this.backgroundColor = "#f0f2f7" // Light grey background
+    this.backgroundColor = "#d0d2d7" // Light grey background
     allSyncServers.push(this)
     this.elm.classList.add("server")
     this.render()

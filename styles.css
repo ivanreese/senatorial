@@ -37,11 +37,6 @@ canvas.text {
   animation: fadeIn 0.5s ease-in-out;
 }
 
-canvas.server {
-  border: 4px solid #0005;
-  border-radius: 1rem;
-}
-
 .canvas-layer {
   position: fixed;
   top: 0;

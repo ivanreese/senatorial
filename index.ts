@@ -1,3 +1,10 @@
+//////////////////////////////////////////////
+// This was all vibe coded. The code sucks. //
+// Code is not the point of this project.   //
+// The point is how it feels.               //
+// Feeling is reality.                      //
+//////////////////////////////////////////////
+
 import * as Automerge from "@automerge/automerge"
 const TAU = Math.PI * 2
 
@@ -56,13 +63,9 @@ type Position = { x: number; y: number }
 
 class Connection {
   lastSpawnedParticle: Particle | null = null
-  
-  constructor(
-    public source: Typewriter, 
-    public target: Typewriter
-  ) {}
-  
-  
+
+  constructor(public source: Typewriter, public target: Typewriter) {}
+
   // Get the distance between source and target
   getDistance(): number {
     return getEdgeDistance(this.source, this.target)
@@ -72,7 +75,6 @@ class Connection {
   isValid(): boolean {
     return this.getDistance() <= SYNC_RANGE
   }
-
 
   // Add new particle to the chain for this connection
   addParticle(particle: Particle): void {
@@ -89,7 +91,6 @@ class Connection {
       this.lastSpawnedParticle = particle.previousParticle
     }
   }
-
 }
 
 // Global connection registry
@@ -111,7 +112,7 @@ function getCenterPosition(typewriter: Typewriter): Position {
   const dims = getTypewriterDimensions(typewriter)
   return {
     x: typewriter.left + dims.width / 2,
-    y: typewriter.top + dims.height / 2
+    y: typewriter.top + dims.height / 2,
   }
 }
 
@@ -226,7 +227,6 @@ class Typewriter {
   insertionX = margin * gw
   insertionY = padding * lh
 
-
   // Get connection to a specific target
   getConnectionTo(target: Typewriter): Connection | null {
     const key = this.getConnectionKey(target)
@@ -252,9 +252,8 @@ class Typewriter {
 
   // Get all connections from this typewriter
   getOutgoingConnections(): Connection[] {
-    return Array.from(allConnections.values()).filter(conn => conn.source === this)
+    return Array.from(allConnections.values()).filter((conn) => conn.source === this)
   }
-
 
   private getConnectionKey(target: Typewriter): string {
     return `${this.elm.id || Math.random()}-to-${target.elm.id || Math.random()}`
@@ -388,10 +387,9 @@ class Typewriter {
     // Only sync if documents have different change histories (compare heads, not just current state)
     const ourHeads = Automerge.getHeads(this.doc)
     const theirHeads = Automerge.getHeads(other.doc)
-    
+
     // Compare change histories by comparing heads
-    if (ourHeads.length === theirHeads.length && 
-        ourHeads.every(head => theirHeads.includes(head))) {
+    if (ourHeads.length === theirHeads.length && ourHeads.every((head) => theirHeads.includes(head))) {
       return // Same change history, already in sync
     }
 
@@ -810,10 +808,10 @@ class ParticleManager {
     // Update typewriter-to-server connections
     allTypewriters.forEach((typewriter) => {
       if (typewriter instanceof SyncServer) return
-      
+
       let closestServer: SyncServer | null = null
       let closestDistance = Infinity
-      
+
       allSyncServers.forEach((server) => {
         const dist = getEdgeDistance(typewriter, server)
         if (dist <= SYNC_RANGE && dist < closestDistance) {
@@ -821,10 +819,9 @@ class ParticleManager {
           closestDistance = dist
         }
       })
-      
-      const currentServer = typewriter.getOutgoingConnections()
-        .find(conn => conn.target instanceof SyncServer)?.target as SyncServer || null
-      
+
+      const currentServer = (typewriter.getOutgoingConnections().find((conn) => conn.target instanceof SyncServer)?.target as SyncServer) || null
+
       if (currentServer !== closestServer) {
         if (currentServer) typewriter.removeConnectionTo(currentServer)
         if (closestServer) {
@@ -836,10 +833,13 @@ class ParticleManager {
 
     // Update server-to-server connections
     allSyncServers.forEach((server) => {
-      const currentTargets = new Set(server.getOutgoingConnections()
-        .filter(conn => conn.target instanceof SyncServer)
-        .map(conn => conn.target as SyncServer))
-      
+      const currentTargets = new Set(
+        server
+          .getOutgoingConnections()
+          .filter((conn) => conn.target instanceof SyncServer)
+          .map((conn) => conn.target as SyncServer)
+      )
+
       // Remove invalid connections and add new ones
       server.getOutgoingConnections().forEach((conn) => {
         if (conn.target instanceof SyncServer && !conn.isValid()) {
@@ -1017,9 +1017,9 @@ class ParticleManager {
       // Draw lines to all connected entities using Connection objects
       typewriter.getOutgoingConnections().forEach((connection) => {
         if (!connection.isValid()) return // Skip invalid connections
-        
+
         const edgeDist = connection.getDistance()
-        
+
         // Get target entity rectangle
         const targetDims = getTypewriterDimensions(connection.target)
         const targetRect = {
@@ -1043,7 +1043,6 @@ class ParticleManager {
         underlayCtx.stroke()
       })
     })
-
 
     // Clear and render overlay content (particles)
     overlayCtx.clearRect(0, 0, window.innerWidth, window.innerHeight)

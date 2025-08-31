@@ -295,9 +295,14 @@ class Typewriter {
 
   // Sync with another typewriter by exchanging missing changes
   syncWith(other: Typewriter) {
-    // Only sync if documents have different change histories
-    if (Automerge.equals(this.doc, other.doc)) {
-      return // Already in sync
+    // Only sync if documents have different change histories (compare heads, not just current state)
+    const ourHeads = Automerge.getHeads(this.doc)
+    const theirHeads = Automerge.getHeads(other.doc)
+    
+    // Compare change histories by comparing heads
+    if (ourHeads.length === theirHeads.length && 
+        ourHeads.every(head => theirHeads.includes(head))) {
+      return // Same change history, already in sync
     }
 
     // Send our changes to them (marked as catch-up sync)

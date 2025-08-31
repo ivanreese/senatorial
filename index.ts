@@ -52,6 +52,49 @@ document.body.appendChild(overlayCanvas)
 
 type Position = { x: number; y: number }
 
+// CONNECTION MANAGEMENT ################################################################################
+
+class Connection {
+  lastSpawnedParticle: Particle | null = null
+  
+  constructor(
+    public source: Typewriter, 
+    public target: Typewriter
+  ) {}
+  
+  
+  // Get the distance between source and target
+  getDistance(): number {
+    return getEdgeDistance(this.source, this.target)
+  }
+
+  // Check if this connection is still valid (within range)
+  isValid(): boolean {
+    return this.getDistance() <= SYNC_RANGE
+  }
+
+
+  // Add new particle to the chain for this connection
+  addParticle(particle: Particle): void {
+    if (this.lastSpawnedParticle) {
+      this.lastSpawnedParticle.nextParticle = particle
+      particle.previousParticle = this.lastSpawnedParticle
+    }
+    this.lastSpawnedParticle = particle
+  }
+
+  // Remove particle from chain (called when particle completes)
+  removeParticle(particle: Particle): void {
+    if (this.lastSpawnedParticle === particle) {
+      this.lastSpawnedParticle = particle.previousParticle
+    }
+  }
+
+}
+
+// Global connection registry
+const allConnections = new Map<string, Connection>()
+
 // GEOMETRY HELPERS ################################################################################
 
 // Calculate typewriter dimensions based on layout constants
@@ -63,14 +106,32 @@ function getTypewriterDimensions(typewriter: Typewriter) {
   return { width, height }
 }
 
+// Calculate center position of a typewriter
+function getCenterPosition(typewriter: Typewriter): Position {
+  const dims = getTypewriterDimensions(typewriter)
+  return {
+    x: typewriter.left + dims.width / 2,
+    y: typewriter.top + dims.height / 2
+  }
+}
+
+// Simple point-to-point distance helper
+function pointDistance(p1: Position, p2: Position): number {
+  const dx = p1.x - p2.x
+  const dy = p1.y - p2.y
+  return Math.hypot(dx, dy)
+}
+
 // Calculate edge-to-edge distance between two typewriters
 function getEdgeDistance(tw1: Typewriter, tw2: Typewriter): number {
   const dims1 = getTypewriterDimensions(tw1)
   const dims2 = getTypewriterDimensions(tw2)
+  const center1 = getCenterPosition(tw1)
+  const center2 = getCenterPosition(tw2)
 
   const centerToCenter = {
-    x: tw1.left + dims1.width / 2 - (tw2.left + dims2.width / 2),
-    y: tw1.top + dims1.height / 2 - (tw2.top + dims2.height / 2),
+    x: center1.x - center2.x,
+    y: center1.y - center2.y,
   }
 
   return Math.hypot(
@@ -165,11 +226,39 @@ class Typewriter {
   insertionX = margin * gw
   insertionY = padding * lh
 
-  // Connection tracking
-  connectedServers = new Set<SyncServer>()
 
-  // Particle tracking
-  lastSpawnedParticle: Particle | null = null
+  // Get connection to a specific target
+  getConnectionTo(target: Typewriter): Connection | null {
+    const key = this.getConnectionKey(target)
+    return allConnections.get(key) || null
+  }
+
+  // Create or get connection to target
+  ensureConnectionTo(target: Typewriter): Connection {
+    const key = this.getConnectionKey(target)
+    let connection = allConnections.get(key)
+    if (!connection) {
+      connection = new Connection(this, target)
+      allConnections.set(key, connection)
+    }
+    return connection
+  }
+
+  // Remove connection to target
+  removeConnectionTo(target: Typewriter) {
+    const key = this.getConnectionKey(target)
+    allConnections.delete(key)
+  }
+
+  // Get all connections from this typewriter
+  getOutgoingConnections(): Connection[] {
+    return Array.from(allConnections.values()).filter(conn => conn.source === this)
+  }
+
+
+  private getConnectionKey(target: Typewriter): string {
+    return `${this.elm.id || Math.random()}-to-${target.elm.id || Math.random()}`
+  }
 
   // Background color
   backgroundColor: string = "white"
@@ -178,6 +267,7 @@ class Typewriter {
     this.elm.className = "text"
     this.elm.style.left = `${left}px`
     this.elm.style.top = `${top}px`
+    this.elm.id = `typewriter-${Math.random().toString(36).substr(2, 9)}`
     document.body.appendChild(this.elm)
 
     // Add drag functionality
@@ -587,35 +677,20 @@ class Particle {
     }
   }
 
-  // Check if this particle can complete (same logic as in ParticleManager.update)
+  // Check if this particle can complete
   canComplete(): boolean {
-    // Check if there's a valid connection path
-    const hasValidConnection = this.hasValidConnection()
-    if (!hasValidConnection) return false
-
     // Check if previous particle is closer (blocks completion)
     if (this.previousParticle && this.previousParticle.lastKnownDistance > this.lastKnownDistance) {
       return false
     }
 
-    return true
-  }
-
-  // Check if particle has valid connection path (extracted from ParticleManager)
-  hasValidConnection(): boolean {
+    // Check if there's a valid connection path
     if (this.source instanceof SyncServer && this.target instanceof SyncServer) {
-      // SS → SS: check if sync servers are within range of each other
-      const dist = getEdgeDistance(this.source, this.target)
-      return dist <= SYNC_RANGE
-    } else if (this.target instanceof SyncServer) {
-      // TW → SS: source must be connected to target sync server
-      return this.source.connectedServers.has(this.target)
-    } else if (this.source instanceof SyncServer) {
-      // SS → TW: target must be connected to source sync server
-      return this.target.connectedServers.has(this.source)
+      return getEdgeDistance(this.source, this.target) <= SYNC_RANGE
+    } else {
+      const connection = this.source.getConnectionTo(this.target)
+      return connection !== null && connection.isValid()
     }
-    // No TW → TW connections, so other cases are invalid
-    return false
   }
 
   draw(ctx: CanvasRenderingContext2D) {
@@ -706,9 +781,7 @@ class ParticleManager {
       const grabRadius = 30
 
       this.particles.forEach((particle) => {
-        const dx = particle.position.x - e.clientX
-        const dy = particle.position.y - e.clientY
-        const distance = Math.hypot(dx, dy)
+        const distance = pointDistance(particle.position, { x: e.clientX, y: e.clientY })
 
         if (distance < grabRadius && distance < closestDistance) {
           closestParticle = particle
@@ -732,16 +805,66 @@ class ParticleManager {
     })
   }
 
+  // Simplified connection management - handles both TW→SS and SS→SS connections
+  updateAllConnections() {
+    // Update typewriter-to-server connections
+    allTypewriters.forEach((typewriter) => {
+      if (typewriter instanceof SyncServer) return
+      
+      let closestServer: SyncServer | null = null
+      let closestDistance = Infinity
+      
+      allSyncServers.forEach((server) => {
+        const dist = getEdgeDistance(typewriter, server)
+        if (dist <= SYNC_RANGE && dist < closestDistance) {
+          closestServer = server
+          closestDistance = dist
+        }
+      })
+      
+      const currentServer = typewriter.getOutgoingConnections()
+        .find(conn => conn.target instanceof SyncServer)?.target as SyncServer || null
+      
+      if (currentServer !== closestServer) {
+        if (currentServer) typewriter.removeConnectionTo(currentServer)
+        if (closestServer) {
+          typewriter.ensureConnectionTo(closestServer)
+          typewriter.syncWith(closestServer)
+        }
+      }
+    })
+
+    // Update server-to-server connections
+    allSyncServers.forEach((server) => {
+      const currentTargets = new Set(server.getOutgoingConnections()
+        .filter(conn => conn.target instanceof SyncServer)
+        .map(conn => conn.target as SyncServer))
+      
+      // Remove invalid connections and add new ones
+      server.getOutgoingConnections().forEach((conn) => {
+        if (conn.target instanceof SyncServer && !conn.isValid()) {
+          server.removeConnectionTo(conn.target)
+        }
+      })
+
+      allSyncServers.forEach((otherServer) => {
+        if (server !== otherServer && getEdgeDistance(server, otherServer) <= SYNC_RANGE) {
+          if (!currentTargets.has(otherServer)) {
+            server.ensureConnectionTo(otherServer)
+            server.syncWith(otherServer)
+          }
+        }
+      })
+    })
+  }
+
   // Add particle carrying changes
   addChangeParticle(source: Typewriter, target: Typewriter, changes: Uint8Array[], isCatchUpSync = false, sourcePosition?: Position) {
     const newParticle = new Particle(changes, source, target, isCatchUpSync, sourcePosition)
 
-    // Link this particle to the previous one spawned by the same source
-    if (source.lastSpawnedParticle) {
-      source.lastSpawnedParticle.nextParticle = newParticle
-      newParticle.previousParticle = source.lastSpawnedParticle
-    }
-    source.lastSpawnedParticle = newParticle
+    // Get or create connection for proper particle chaining
+    const connection = source.ensureConnectionTo(target)
+    connection.addParticle(newParticle)
 
     this.particles.push(newParticle)
   }
@@ -774,7 +897,7 @@ class ParticleManager {
         // Mouse spring with minimum length - repels when too close
         const dx = this.mousePosition.x - particle.position.x
         const dy = this.mousePosition.y - particle.position.y
-        const distance = Math.hypot(dx, dy)
+        const distance = pointDistance(this.mousePosition, particle.position)
         if (distance > 0) {
           forceX = (dx / distance) * mouseSpringConstant * distance
           forceY = (dy / distance) * mouseSpringConstant * distance
@@ -785,7 +908,7 @@ class ParticleManager {
           // Constant force toward target
           const dx = targetInfo.position.x - particle.position.x
           const dy = targetInfo.position.y - particle.position.y
-          const distance = Math.hypot(dx, dy)
+          const distance = pointDistance(targetInfo.position, particle.position)
 
           if (distance > 0) {
             // Constant force in direction of target
@@ -812,9 +935,7 @@ class ParticleManager {
       particle.position.y += particle.velocity.y * dt
 
       // Calculate distance for completion check
-      const dx = targetInfo.position.x - particle.position.x
-      const dy = targetInfo.position.y - particle.position.y
-      const dist = Math.hypot(dx, dy)
+      const dist = pointDistance(targetInfo.position, particle.position)
       particle.lastKnownDistance = dist
 
       // Apply this particle's changes to the target's speculative doc for subsequent particles
@@ -835,9 +956,10 @@ class ParticleManager {
       if (particle.previousParticle) particle.previousParticle.nextParticle = particle.nextParticle
       if (particle.nextParticle) particle.nextParticle.previousParticle = particle.previousParticle
 
-      // Update source's lastSpawnedParticle if this was the last one
-      if (particle.source.lastSpawnedParticle === particle) {
-        particle.source.lastSpawnedParticle = null
+      // Update connection's particle chain
+      const connection = particle.source.getConnectionTo(particle.target)
+      if (connection) {
+        connection.removeParticle(particle)
       }
 
       // Rebroadcast logic for sync servers
@@ -876,57 +998,8 @@ class ParticleManager {
     // Clear and render underlay content (connection lines)
     underlayCtx.clearRect(0, 0, window.innerWidth, window.innerHeight)
 
-    // First, update connections for all typewriters to their closest servers
-    allTypewriters.forEach((typewriter) => {
-      if (typewriter instanceof SyncServer) return // Skip sync servers
-      
-      // Find closest sync server within range
-      let closestServer: SyncServer | null = null
-      let closestDistance = Infinity
-      
-      allSyncServers.forEach((server) => {
-        const dist = getEdgeDistance(typewriter, server)
-        if (dist <= SYNC_RANGE && dist < closestDistance) {
-          closestServer = server
-          closestDistance = dist
-        }
-      })
-      
-      // Update connections - clear all and add only the closest
-      const hadConnections = typewriter.connectedServers.size > 0
-      typewriter.connectedServers.clear()
-      
-      if (closestServer) {
-        const wasConnected = hadConnections
-        typewriter.connectedServers.add(closestServer)
-        if (!wasConnected) {
-          // New connection established - sync
-          typewriter.syncWith(closestServer)
-        }
-      }
-    })
-
-    // Update server-to-server connections
-    allSyncServers.forEach((server) => {
-      // Track which servers this server was connected to
-      const previousConnections = new Set(server.connectedServers)
-      server.connectedServers.clear()
-
-      // Find all sync servers within range
-      allSyncServers.forEach((otherServer) => {
-        if (server === otherServer) return // Skip self
-        
-        const dist = getEdgeDistance(server, otherServer)
-        if (dist <= SYNC_RANGE) {
-          server.connectedServers.add(otherServer)
-          
-          // If this is a new connection, sync
-          if (!previousConnections.has(otherServer)) {
-            server.syncWith(otherServer)
-          }
-        }
-      })
-    })
+    // Update all connections in a single pass
+    this.updateAllConnections()
 
     // Now draw lines based on actual connections
     allTypewriters.forEach((typewriter) => {
@@ -941,30 +1014,32 @@ class ParticleManager {
         height: typewriterDims.height,
       }
 
-      // Draw lines to all connected entities
-      typewriter.connectedServers.forEach((connected) => {
-        const edgeDist = getEdgeDistance(typewriter, connected)
+      // Draw lines to all connected entities using Connection objects
+      typewriter.getOutgoingConnections().forEach((connection) => {
+        if (!connection.isValid()) return // Skip invalid connections
         
-        // Get connected entity rectangle
-        const connectedDims = getTypewriterDimensions(connected)
-        const connectedRect = {
-          left: connected.left,
-          top: connected.top,
-          width: connectedDims.width,
-          height: connectedDims.height,
+        const edgeDist = connection.getDistance()
+        
+        // Get target entity rectangle
+        const targetDims = getTypewriterDimensions(connection.target)
+        const targetRect = {
+          left: connection.target.left,
+          top: connection.target.top,
+          width: targetDims.width,
+          height: targetDims.height,
         }
 
         // Calculate fade: 1.0 at 0-200px, fade to 0.1 from 200-400px
         const alpha = renormalized(edgeDist, SYNC_RANGE * 0.5, SYNC_RANGE, 0.5, 0.1, true)
 
         // Draw line between centers with fade
-        const typewriterCenter = { x: typewriterRect.left + typewriterRect.width / 2, y: typewriterRect.top + typewriterRect.height / 2 }
-        const connectedCenter = { x: connectedRect.left + connectedRect.width / 2, y: connectedRect.top + connectedRect.height / 2 }
+        const sourceCenter = getCenterPosition(typewriter)
+        const targetCenter = getCenterPosition(connection.target)
 
         underlayCtx.strokeStyle = `rgba(255, 255, 255, ${alpha})`
         underlayCtx.beginPath()
-        underlayCtx.moveTo(typewriterCenter.x, typewriterCenter.y)
-        underlayCtx.lineTo(connectedCenter.x, connectedCenter.y)
+        underlayCtx.moveTo(sourceCenter.x, sourceCenter.y)
+        underlayCtx.lineTo(targetCenter.x, targetCenter.y)
         underlayCtx.stroke()
       })
     })

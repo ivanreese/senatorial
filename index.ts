@@ -876,65 +876,99 @@ class ParticleManager {
     // Clear and render underlay content (connection lines)
     underlayCtx.clearRect(0, 0, window.innerWidth, window.innerHeight)
 
-    // Update connections and render sync server connections on underlay
-    allSyncServers.forEach((server) => {
-      underlayCtx.lineWidth = 3
-
-      // Get server rectangle
-      const serverDims = getTypewriterDimensions(server)
-      const serverRect = {
-        left: server.left,
-        top: server.top,
-        width: serverDims.width,
-        height: serverDims.height,
-      }
-
-      // Check connections to all typewriters
-      allTypewriters.forEach((typewriter) => {
-        if (typewriter === server) return // Don't connect to self
-
-        // Check distance between rectangle edges
-        const edgeDist = getEdgeDistance(server, typewriter)
-        const inRange = edgeDist <= SYNC_RANGE
-
-        // Track connection state changes
-        const wasConnected = typewriter.connectedServers.has(server)
-
-        if (inRange && !wasConnected) {
-          // New connection established - sync
-          typewriter.connectedServers.add(server)
-          typewriter.syncWith(server)
-        } else if (!inRange && wasConnected) {
-          // Connection lost
-          typewriter.connectedServers.delete(server)
+    // First, update connections for all typewriters to their closest servers
+    allTypewriters.forEach((typewriter) => {
+      if (typewriter instanceof SyncServer) return // Skip sync servers
+      
+      // Find closest sync server within range
+      let closestServer: SyncServer | null = null
+      let closestDistance = Infinity
+      
+      allSyncServers.forEach((server) => {
+        const dist = getEdgeDistance(typewriter, server)
+        if (dist <= SYNC_RANGE && dist < closestDistance) {
+          closestServer = server
+          closestDistance = dist
         }
+      })
+      
+      // Update connections - clear all and add only the closest
+      const hadConnections = typewriter.connectedServers.size > 0
+      typewriter.connectedServers.clear()
+      
+      if (closestServer) {
+        const wasConnected = hadConnections
+        typewriter.connectedServers.add(closestServer)
+        if (!wasConnected) {
+          // New connection established - sync
+          typewriter.syncWith(closestServer)
+        }
+      }
+    })
 
-        // Draw connection line if in range
-        if (inRange) {
-          // Get typewriter rectangle
-          const typewriterDims = getTypewriterDimensions(typewriter)
-          const typewriterRect = {
-            left: typewriter.left,
-            top: typewriter.top,
-            width: typewriterDims.width,
-            height: typewriterDims.height,
+    // Update server-to-server connections
+    allSyncServers.forEach((server) => {
+      // Track which servers this server was connected to
+      const previousConnections = new Set(server.connectedServers)
+      server.connectedServers.clear()
+
+      // Find all sync servers within range
+      allSyncServers.forEach((otherServer) => {
+        if (server === otherServer) return // Skip self
+        
+        const dist = getEdgeDistance(server, otherServer)
+        if (dist <= SYNC_RANGE) {
+          server.connectedServers.add(otherServer)
+          
+          // If this is a new connection, sync
+          if (!previousConnections.has(otherServer)) {
+            server.syncWith(otherServer)
           }
-
-          // Calculate fade: 1.0 at 0-200px, fade to 0.1 from 200-400px
-          const alpha = renormalized(edgeDist, SYNC_RANGE * 0.5, SYNC_RANGE, 0.5, 0.1, true)
-
-          // Draw line between centers with fade
-          const serverCenter = { x: serverRect.left + serverRect.width / 2, y: serverRect.top + serverRect.height / 2 }
-          const typewriterCenter = { x: typewriterRect.left + typewriterRect.width / 2, y: typewriterRect.top + typewriterRect.height / 2 }
-
-          underlayCtx.strokeStyle = `rgba(255, 255, 255, ${alpha})`
-          underlayCtx.beginPath()
-          underlayCtx.moveTo(serverCenter.x, serverCenter.y)
-          underlayCtx.lineTo(typewriterCenter.x, typewriterCenter.y)
-          underlayCtx.stroke()
         }
       })
     })
+
+    // Now draw lines based on actual connections
+    allTypewriters.forEach((typewriter) => {
+      underlayCtx.lineWidth = 3
+
+      // Get typewriter rectangle
+      const typewriterDims = getTypewriterDimensions(typewriter)
+      const typewriterRect = {
+        left: typewriter.left,
+        top: typewriter.top,
+        width: typewriterDims.width,
+        height: typewriterDims.height,
+      }
+
+      // Draw lines to all connected entities
+      typewriter.connectedServers.forEach((connected) => {
+        const edgeDist = getEdgeDistance(typewriter, connected)
+        
+        // Get connected entity rectangle
+        const connectedDims = getTypewriterDimensions(connected)
+        const connectedRect = {
+          left: connected.left,
+          top: connected.top,
+          width: connectedDims.width,
+          height: connectedDims.height,
+        }
+
+        // Calculate fade: 1.0 at 0-200px, fade to 0.1 from 200-400px
+        const alpha = renormalized(edgeDist, SYNC_RANGE * 0.5, SYNC_RANGE, 0.5, 0.1, true)
+
+        // Draw line between centers with fade
+        const typewriterCenter = { x: typewriterRect.left + typewriterRect.width / 2, y: typewriterRect.top + typewriterRect.height / 2 }
+        const connectedCenter = { x: connectedRect.left + connectedRect.width / 2, y: connectedRect.top + connectedRect.height / 2 }
+
+        underlayCtx.strokeStyle = `rgba(255, 255, 255, ${alpha})`
+        underlayCtx.beginPath()
+        underlayCtx.moveTo(typewriterCenter.x, typewriterCenter.y)
+        underlayCtx.lineTo(connectedCenter.x, connectedCenter.y)
+        underlayCtx.stroke()
+      })
+    })
+
 
     // Clear and render overlay content (particles)
     overlayCtx.clearRect(0, 0, window.innerWidth, window.innerHeight)
